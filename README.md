@@ -112,3 +112,23 @@ Nothing, for the campaign in `profiles/`. A hosted version would need a shared s
 ## Licence
 
 MIT — see [LICENSE](LICENSE).
+
+## Hosted
+
+There is a deployed copy on Vercel, behind a password, with its data in Neon
+Postgres. It is wired up like this:
+
+| Setting | Who sets it |
+|---|---|
+| `DATABASE_URL` | Neon connection string — already set |
+| `APP_PASSWORD` | the password for the review page — already set, change it when you like |
+| `PROFILE` | which campaign to run — already set |
+| `GEMINI_API_KEY`, `HUNTER_API_KEY`, `RESEND_API_KEY`, `EMAIL_TO` | you, in the Vercel project settings |
+
+`GET /api/health` says what is still missing without signing in. Until the
+Gemini key is there, the page loads and signs you in but can do no research.
+
+Two safety rules are enforced in code rather than by convention: a hosted
+deployment with no `DATABASE_URL` refuses to start rather than falling back to
+a file it will lose, and one with no `APP_PASSWORD` serves nothing at all
+rather than defaulting to open.
