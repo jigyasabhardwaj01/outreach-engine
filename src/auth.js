@@ -36,16 +36,24 @@ export const parseCookies = (header = '') =>
 /**
  * Who is allowed in.
  *
- * - hosted with no APP_PASSWORD  -> nobody, with an explanation
- * - hosted with one              -> whoever has the cookie
+ * - hosted with APP_PASSWORD     -> whoever has the cookie
+ * - hosted with PUBLIC_ACCESS    -> everyone, on purpose (see below)
+ * - hosted with neither          -> nobody, with an explanation
  * - local with no APP_PASSWORD   -> you, because it is your own machine
+ *
+ * PUBLIC_ACCESS has to be set deliberately. An open deployment is a
+ * defensible choice; becoming open because a password went missing is not,
+ * so a lost APP_PASSWORD closes the site rather than unlocking it.
  */
 export function authorize(req, settings) {
   const password = settings.APP_PASSWORD;
   const hosted = Boolean(settings.VERCEL);
+  const open = String(settings.PUBLIC_ACCESS ?? '').toLowerCase() === 'true';
 
   if (!password) {
-    if (hosted) return { ok: false, status: 503, error: 'This deployment has no APP_PASSWORD set, so it is closed. Set one in the project settings.' };
+    if (hosted && !open) {
+      return { ok: false, status: 503, error: 'This deployment has no APP_PASSWORD set, so it is closed. Set one, or set PUBLIC_ACCESS=true to open it deliberately.' };
+    }
     return { ok: true };
   }
 

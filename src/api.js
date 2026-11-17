@@ -28,7 +28,13 @@ export function createApi({ actions, store, settings }) {
   return {
     /** Is this deployment actually wired up? Safe to call signed out. */
     async health() {
-      const missing = ['DATABASE_URL', 'APP_PASSWORD', 'GEMINI_API_KEY', 'EMAIL_TO'].filter((name) => !settings[name]);
+      const open = String(settings.PUBLIC_ACCESS ?? '').toLowerCase() === 'true';
+      const access = settings.APP_PASSWORD ? 'password' : open ? 'open to anyone' : 'closed';
+
+      const missing = ['DATABASE_URL', 'GEMINI_API_KEY', 'EMAIL_TO'].filter((name) => !settings[name]);
+      // Absent on purpose is not the same as missing, but with neither a
+      // password nor an explicit opt-in the site cannot serve anybody.
+      if (access === 'closed') missing.push('APP_PASSWORD');
       let database = 'not configured';
       if (settings.DATABASE_URL) {
         try {
@@ -37,7 +43,7 @@ export function createApi({ actions, store, settings }) {
           database = `unreachable: ${error.message}`;
         }
       }
-      return ok({ ready: missing.length === 0, missing, database });
+      return ok({ ready: missing.length === 0, missing, access, database });
     },
 
     async login(req) {

@@ -19,6 +19,20 @@ test('locally, with no password, you are let in', () => {
   assert.equal(authorize({ headers: {} }, {}).ok, true);
 });
 
+test('a hosted deployment is open only when it says so outright', () => {
+  assert.equal(authorize({ headers: {} }, { VERCEL: '1', PUBLIC_ACCESS: 'true' }).ok, true);
+  // Anything other than an explicit true leaves it closed: no truthiness,
+  // so a stray value cannot quietly open the site.
+  for (const value of ['false', '1', 'yes', '', undefined]) {
+    assert.equal(authorize({ headers: {} }, { VERCEL: '1', PUBLIC_ACCESS: value }).ok, false, `PUBLIC_ACCESS=${value}`);
+  }
+});
+
+test('a password still wins over PUBLIC_ACCESS', () => {
+  const settings = { VERCEL: '1', APP_PASSWORD: 'hunter2', PUBLIC_ACCESS: 'true' };
+  assert.equal(authorize({ headers: {} }, settings).status, 401, 'set a password and it is enforced');
+});
+
 test('hosted, only the right cookie gets in', () => {
   assert.equal(authorize(withCookie(tokenFor('hunter2')), hosted).ok, true);
   assert.equal(authorize(withCookie(tokenFor('guess')), hosted).ok, false);
@@ -90,8 +104,19 @@ test('health says what is missing without being signed in', async () => {
   const { body } = await api.health();
 
   assert.equal(body.ready, false);
-  assert.deepEqual(body.missing, ['DATABASE_URL', 'APP_PASSWORD', 'GEMINI_API_KEY', 'EMAIL_TO']);
+  assert.deepEqual(body.missing, ['DATABASE_URL', 'GEMINI_API_KEY', 'EMAIL_TO', 'APP_PASSWORD']);
+  assert.equal(body.access, 'closed');
   assert.equal(body.database, 'not configured');
+});
+
+test('health distinguishes a deliberately open site from a broken one', async () => {
+  const open = createApi({ actions: {}, store: new MemoryStore(), settings: { VERCEL: '1', PUBLIC_ACCESS: 'true' } });
+  const openBody = (await open.health()).body;
+  assert.equal(openBody.access, 'open to anyone');
+  assert.ok(!openBody.missing.includes('APP_PASSWORD'), 'not having one is the point');
+
+  const locked = createApi({ actions: {}, store: new MemoryStore(), settings: { VERCEL: '1', APP_PASSWORD: 'x' } });
+  assert.equal((await locked.health()).body.access, 'password');
 });
 
 const fakeNeon = (rows) => {

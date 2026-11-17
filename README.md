@@ -115,13 +115,16 @@ MIT — see [LICENSE](LICENSE).
 
 ## Hosted
 
-There is a deployed copy on Vercel, behind a password, with its data in Neon
-Postgres. It is wired up like this:
+There is a deployed copy on Vercel with its data in Neon Postgres. It is
+**open to anyone with the link** — `PUBLIC_ACCESS=true` — so whoever opens it
+can run research against your Gemini quota and send mail to your `EMAIL_TO`.
+That is a deliberate setting; set `APP_PASSWORD` instead to put it behind a
+password again. It is wired up like this:
 
 | Setting | Who sets it |
 |---|---|
 | `DATABASE_URL` | Neon connection string — already set |
-| `APP_PASSWORD` | the password for the review page — already set, change it when you like |
+| `PUBLIC_ACCESS` | `true`, meaning no login — set `APP_PASSWORD` instead to require one |
 | `PROFILE` | which campaign to run — already set |
 | `GEMINI_API_KEY`, `HUNTER_API_KEY`, `RESEND_API_KEY`, `EMAIL_TO` | you, in the Vercel project settings |
 
@@ -130,5 +133,6 @@ Gemini key is there, the page loads and signs you in but can do no research.
 
 Two safety rules are enforced in code rather than by convention: a hosted
 deployment with no `DATABASE_URL` refuses to start rather than falling back to
-a file it will lose, and one with no `APP_PASSWORD` serves nothing at all
-rather than defaulting to open.
+a file it will lose, and one with neither an `APP_PASSWORD` nor
+`PUBLIC_ACCESS=true` serves nothing at all rather than defaulting to open — a
+site should not become public because a password went missing.
