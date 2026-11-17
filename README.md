@@ -7,6 +7,13 @@ we actually read.
 Node 20+, no dependencies. Nothing is sent without your approval, and every
 email goes to `EMAIL_TO` — never to the contact.
 
+> **Run this on your own machine.** The review page has no login, and it can
+> spend your API credits and send mail. Anyone who can reach it can do both, so
+> it binds to localhost and should stay there. Hosting it would also need a real
+> database: the store writes to a file, which a serverless host will throw away
+> between requests. If you do want it on a server, add a shared store and an
+> auth gate first — in that order, and before it ever has your keys.
+
 ## The idea
 
 A **profile** is the whole campaign as data: what you sell, what makes a company
@@ -101,3 +108,7 @@ see what's wrong rather than having it quietly sent.
 ## Not built
 
 Nothing, for the campaign in `profiles/`. A hosted version would need a shared store and a login — the page has none, so keep it on your own machine.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).
