@@ -115,21 +115,25 @@ MIT — see [LICENSE](LICENSE).
 
 ## Hosted
 
-There is a deployed copy on Vercel with its data in Neon Postgres. It is
-**open to anyone with the link** — `PUBLIC_ACCESS=true` — so whoever opens it
-can run research against your Gemini quota and send mail to your `EMAIL_TO`.
-That is a deliberate setting; set `APP_PASSWORD` instead to put it behind a
-password again. It is wired up like this:
+There is a deployed copy on Vercel with its data in Neon Postgres. Reading it
+is open to anyone with the link; running research or sending mail needs the
+password, because those spend API credits and put mail in an inbox. It is
+wired up like this:
 
 | Setting | Who sets it |
 |---|---|
 | `DATABASE_URL` | Neon connection string — already set |
-| `PUBLIC_ACCESS` | `true`, meaning no login — set `APP_PASSWORD` instead to require one |
+| `PUBLIC_ACCESS` | `true` — anyone may read the page |
+| `APP_PASSWORD` | required before anything runs or sends; drop it to let anyone act |
 | `PROFILE` | which campaign to run — already set |
 | `GEMINI_API_KEY`, `HUNTER_API_KEY`, `RESEND_API_KEY`, `EMAIL_TO` | you, in the Vercel project settings |
 
 `GET /api/health` says what is still missing without signing in. Until the
 Gemini key is there, the page loads and signs you in but can do no research.
+
+Access comes in four shapes, and `GET /api/health` reports which one is live:
+`password` (sign in for everything), `public to read, password to act` (the
+deployed setting), `open to anyone`, and `closed`.
 
 Two safety rules are enforced in code rather than by convention: a hosted
 deployment with no `DATABASE_URL` refuses to start rather than falling back to
