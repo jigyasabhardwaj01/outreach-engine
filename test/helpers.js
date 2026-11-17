@@ -33,7 +33,16 @@ export function fakeWeb(pages, { failing = [] } = {}) {
 
 export const testProfile = (overrides = {}) =>
   defineProfile({
-    seller: { product: 'compliance automation', oneLiner: 'We automate compliance.' },
+    seller: { company: 'Us', product: 'compliance automation', oneLiner: 'We automate compliance.', senderName: 'Sam', senderTitle: 'Us' },
+    email: { maxWords: 110, painPoints: 2, hookMaxAgeMonths: 12 },
+    contacts: {
+      roles: {
+        security: { match: /\b(ciso|head of security|grc)\b/i, because: 'owns compliance' },
+        cto: { match: /\b(cto|chief technology)\b/i, because: 'owns it where nobody else does' },
+        ceo: { match: /\b(ceo|founder)\b/i, because: 'closest decision-maker' },
+      },
+      order: (employees) => (employees !== null && employees < 50 ? ['cto', 'ceo'] : ['security', 'cto']),
+    },
     discovery: [{ source: 'Job posts', query: 'companies hiring for SOC 2' }],
     defaultVerdict: reject('no_trigger', 'Nothing to act on.'),
     excludeDomains: ['ourselves.com'],
