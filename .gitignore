@@ -6,3 +6,8 @@ node_modules/
 
 # The repo this was built from, kept for reference only.
 reference/
+.vercel
+.env*
+.app-password.txt
+.env.local
+.vercel
