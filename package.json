@@ -1,0 +1,14 @@
+{
+  "name": "outreach-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Evidence-first cold outreach: find companies, qualify them against a profile, draft email backed by quotes.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "doctor": "node cli.js doctor"
+  }
+}
