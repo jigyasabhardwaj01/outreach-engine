@@ -38,6 +38,79 @@ export const STAGES = [
 
 export const stageById = (id) => STAGES.find((stage) => stage.id === id) ?? STAGES[0];
 
+/**
+ * The journey a company makes, shown as a rail across the top. The tabs above
+ * are where *you* work; this is where the *companies* are, which is a
+ * different question and worth showing separately.
+ */
+export const PIPELINE = [
+  { id: 'shortlist', name: 'Shortlist' },
+  { id: 'research', name: 'Research' },
+  { id: 'qualify', name: 'Qualify' },
+  { id: 'contact', name: 'Find contact' },
+  { id: 'draft', name: 'Draft' },
+  { id: 'send', name: 'Send' },
+];
+
+const PIPELINE_BY_STATUS = {
+  shortlisted: 'shortlist',
+  researching: 'research',
+  researched: 'qualify',
+  approved: 'contact',
+  contact_found: 'contact',
+  no_contact: 'contact',
+  drafted: 'draft',
+  email_rejected: 'draft',
+  sent: 'send',
+};
+
+/** Where one company has got to, or null once it has been ruled out. */
+export const pipelineStageOf = (company) => (company?.status === 'rejected' ? null : PIPELINE_BY_STATUS[company?.status] ?? null);
+
+export function pipelineCounts(companies) {
+  const counts = Object.fromEntries(PIPELINE.map((stage) => [stage.id, 0]));
+  for (const company of Object.values(companies ?? {})) {
+    const stage = pipelineStageOf(company);
+    if (stage) counts[stage]++;
+  }
+  return counts;
+}
+
+/** The furthest stage anything has reached, for lighting up the rail. */
+export function furthestStage(companies) {
+  const counts = pipelineCounts(companies);
+  const reached = PIPELINE.filter((stage) => counts[stage.id] > 0);
+  return reached.length ? reached.at(-1).id : null;
+}
+
+/**
+ * The banner: the single most useful thing to say about where things stand,
+ * and a quieter line of totals underneath.
+ */
+export function bannerFor(companies) {
+  const counts = countsByStage(companies);
+  const all = Object.values(companies ?? {});
+  const sent = all.filter((c) => c.status === 'sent').length;
+  const rejected = all.filter((c) => c.status === 'rejected').length;
+  const detail = [sent && `${sent} sent`, rejected && `${rejected} ruled out`].filter(Boolean).join(', ');
+
+  if (counts.review) return { title: counts.review === 1 ? '1 company waiting for you' : `${counts.review} companies waiting for you`, detail };
+  if (counts.emails) return { title: counts.emails === 1 ? '1 draft to approve' : `${counts.emails} drafts to approve`, detail };
+  if (counts.waiting) return { title: `${counts.waiting} shortlisted, not yet researched`, detail };
+  if (all.length) return { title: 'Nothing waiting for you', detail };
+  return { title: 'Nothing here yet', detail: 'Find some companies to get started.' };
+}
+
+/** "20 waiting for research: a.com, b.com and 18 more" */
+export function researchQueueLine(companies, limit = 8) {
+  const waiting = companiesIn(companies, 'waiting').map((c) => c.domain).sort();
+  if (!waiting.length) return 'Nothing is waiting. Find companies first.';
+
+  const shown = waiting.slice(0, limit).join(', ');
+  const rest = waiting.length - limit;
+  return `${waiting.length} waiting for research: ${shown}${rest > 0 ? ` and ${rest} more` : ''}`;
+}
+
 export const companiesIn = (companies, stageId) => Object.values(companies ?? {}).filter(stageById(stageId).has);
 
 export const countsByStage = (companies) =>

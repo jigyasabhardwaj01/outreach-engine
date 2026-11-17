@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STAGES, stageById, companiesIn, countsByStage, firstBusyStage, awaitingResearch,
+  PIPELINE, pipelineStageOf, pipelineCounts, furthestStage, bannerFor, researchQueueLine,
   actionState, verdictWording, answerWording, evidenceWording, sourceLabel, formatDate, wordCount, sendLabel, summaryLine, researchProgress,
 } from '../public/view.js';
 
@@ -121,4 +122,54 @@ test('the send button never trails off into nothing', () => {
   assert.equal(sendLabel('   '), 'Send to your own address');
   assert.equal(sendLabel(null), 'Send to your own address');
   assert.equal(sendLabel(undefined), 'Send to your own address');
+});
+
+// ---------------------------------------------------------------- the pipeline rail
+
+test('a company sits at exactly one point on the rail', () => {
+  assert.equal(pipelineStageOf({ status: 'shortlisted' }), 'shortlist');
+  assert.equal(pipelineStageOf({ status: 'researching' }), 'research');
+  assert.equal(pipelineStageOf({ status: 'researched' }), 'qualify');
+  assert.equal(pipelineStageOf({ status: 'no_contact' }), 'contact');
+  assert.equal(pipelineStageOf({ status: 'drafted' }), 'draft');
+  assert.equal(pipelineStageOf({ status: 'sent' }), 'send');
+});
+
+test('a rejected company leaves the rail rather than lingering on it', () => {
+  assert.equal(pipelineStageOf({ status: 'rejected' }), null);
+  assert.equal(pipelineStageOf({ status: 'nonsense' }), null);
+  assert.equal(pipelineStageOf(undefined), null);
+});
+
+test('the rail counts what is actually at each stop', () => {
+  assert.deepEqual(pipelineCounts(companies), { shortlist: 1, research: 1, qualify: 1, contact: 1, draft: 1, send: 1 });
+  assert.deepEqual(pipelineCounts({}), { shortlist: 0, research: 0, qualify: 0, contact: 0, draft: 0, send: 0 });
+});
+
+test('the furthest stage reached is what lights the rail up', () => {
+  assert.equal(furthestStage(companies), 'send');
+  assert.equal(furthestStage({ a: { status: 'shortlisted' }, b: { status: 'researched' } }), 'qualify');
+  assert.equal(furthestStage({ a: { status: 'rejected' } }), null, 'rejections light nothing');
+  assert.equal(furthestStage({}), null);
+});
+
+test('the banner leads with whatever most needs you', () => {
+  assert.match(bannerFor(companies).title, /^1 company waiting for you$/);
+  assert.equal(bannerFor({ a: { status: 'drafted' }, b: { status: 'drafted' } }).title, '2 drafts to approve');
+  assert.equal(bannerFor({ a: { status: 'shortlisted' } }).title, '1 shortlisted, not yet researched');
+  assert.equal(bannerFor({ a: { status: 'sent' } }).title, 'Nothing waiting for you');
+  assert.equal(bannerFor({}).title, 'Nothing here yet');
+});
+
+test('the banner totals read as English, and skip what is zero', () => {
+  assert.equal(bannerFor({ a: { status: 'sent' }, b: { status: 'rejected' } }).detail, '1 sent, 1 ruled out');
+  assert.equal(bannerFor({ a: { status: 'sent' } }).detail, '1 sent');
+  assert.equal(bannerFor({ a: { status: 'drafted' } }).detail, '', 'nothing sent or rejected yet, so say nothing');
+});
+
+test('the research queue names what is waiting, then stops naming', () => {
+  const many = Object.fromEntries(['b.com', 'a.com', 'c.com'].map((d) => [d, { domain: d, status: 'shortlisted' }]));
+  assert.equal(researchQueueLine(many, 8), '3 waiting for research: a.com, b.com, c.com');
+  assert.equal(researchQueueLine(many, 2), '3 waiting for research: a.com, b.com and 1 more');
+  assert.match(researchQueueLine({}), /^Nothing is waiting/);
 });

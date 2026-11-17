@@ -2,6 +2,7 @@
 // there; this file only builds elements and talks to the API.
 import {
   STAGES, stageById, companiesIn, countsByStage, firstBusyStage, awaitingResearch,
+  PIPELINE, pipelineCounts, furthestStage, bannerFor, researchQueueLine,
   actionState, verdictWording, answerWording, evidenceWording, sourceLabel, wordCount, sendLabel, summaryLine, researchProgress,
 } from './view.js';
 
@@ -301,16 +302,79 @@ function renderHeader() {
   $('#chips').replaceChildren(...chips);
 }
 
+// The rail across the top: where the companies are, as opposed to the tabs
+// below, which are where your attention is needed.
+function renderRail() {
+  const counts = pipelineCounts(state.companies);
+  const furthest = furthestStage(state.companies);
+  const furthestAt = PIPELINE.findIndex((s) => s.id === furthest);
+
+  $('#rail').replaceChildren(...PIPELINE.map((stop, index) =>
+    h('div', {
+      class: ['stop', furthestAt >= 0 && index <= furthestAt && 'done', stop.id === furthest && 'here'].filter(Boolean).join(' '),
+    },
+      h('div', { class: 'dot' }),
+      h('div', { class: 'name' }, stop.name),
+      h('div', { class: 'n' }, counts[stop.id] ? String(counts[stop.id]) : ''),
+    )));
+}
+
+const ICONS = {
+  search: 'M10.5 3a7.5 7.5 0 1 0 4.55 13.46l3.74 3.74 1.42-1.42-3.74-3.74A7.5 7.5 0 0 0 10.5 3Zm0 2a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11Z',
+  doc: 'M6 2h8l4 4v16H6V2Zm7 1.5V7h3.5L13 3.5ZM8 11h8v1.6H8V11Zm0 4h8v1.6H8V15Z',
+};
+
+const icon = (name, plum = false) => {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '18');
+  svg.setAttribute('height', '18');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', ICONS[name]);
+  path.setAttribute('fill', 'currentColor');
+  svg.append(path);
+  return h('div', { class: `icon ${plum ? 'plum' : ''}` }, svg);
+};
+
+function doCard({ iconName, plum, title, body, label, onclick }) {
+  const { enabled, reason } = actionState({ signedIn: state.signedIn, ready: state.ready, busy });
+  return h('div', { class: 'do' },
+    icon(iconName, plum),
+    h('h3', {}, title),
+    h('p', {}, body),
+    h('div', { class: 'go' },
+      h('button', { class: 'go-link', disabled: !enabled, title: reason, onclick }, `${label} →`)),
+  );
+}
+
 function renderToolbar() {
   const waiting = awaitingResearch(state.companies);
   $('#toolbar').replaceChildren(
-    actionButton('Find 10 companies', { primary: true, onclick: () => run('Searching for companies', async () => {
-      const { added } = await call('discover', { limit: 10 });
-      say(`Shortlisted ${added}.`, 'ok');
-    }) }),
-    actionButton('Research shortlisted', { onclick: () => run('Researching', researchAll) }),
-    h('span', { class: 'small soft' }, waiting ? `${waiting} waiting to be researched` : ''),
+    doCard({
+      iconName: 'search',
+      title: 'Find companies',
+      body: 'Search free sources for companies that may need what you sell soon.',
+      label: 'Find 10 companies',
+      onclick: () => run('Searching for companies', async () => {
+        const { added } = await call('discover', { limit: 10 });
+        say(`Shortlisted ${added}.`, 'ok');
+      }),
+    }),
+    doCard({
+      iconName: 'doc',
+      plum: true,
+      title: 'Research companies',
+      body: researchQueueLine(state.companies),
+      label: waiting ? 'Research shortlisted' : 'Nothing to research',
+      onclick: () => run('Researching', researchAll),
+    }),
   );
+}
+
+function renderBanner() {
+  const { title, detail } = bannerFor(state.companies);
+  $('#banner').replaceChildren(h('strong', {}, title), detail ? h('span', {}, detail) : null);
 }
 
 function renderTabs() {
@@ -321,11 +385,14 @@ function renderTabs() {
       'aria-selected': String(item.id === stage),
       onclick: () => { stage = item.id; render(); },
     }, item.name, h('span', { class: 'count' }, String(counts[item.id])))));
+  $('#blurb').textContent = stageById(stage).blurb;
 }
 
 function render() {
   renderHeader();
+  renderRail();
   renderToolbar();
+  renderBanner();
   renderTabs();
 
   const current = stageById(stage);
