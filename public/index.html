@@ -112,8 +112,46 @@ function h(tag, props = {}, ...children) {
 
 const say = (message) => { $('#status').textContent = message; };
 
+// Hosted, this page is behind a password; locally there is usually none.
+function showLogin(message) {
+  document.querySelector('.bar').hidden = true;
+  document.querySelector('.tabs').hidden = true;
+  $('#sendingTo').textContent = '';
+
+  const password = h('input', { type: 'password', placeholder: 'Password', autofocus: true });
+  const problem = h('p', { class: 'small soft' }, message ?? '');
+  const signIn = async () => {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: password.value }),
+    });
+    if (res.ok) {
+      document.querySelector('.bar').hidden = false;
+      document.querySelector('.tabs').hidden = false;
+      return load();
+    }
+    problem.textContent = (await res.json().catch(() => ({}))).error ?? 'That did not work.';
+  };
+
+  password.addEventListener('keydown', (event) => event.key === 'Enter' && signIn());
+  $('#list').replaceChildren(
+    h('article', { class: 'card' },
+      h('h2', {}, 'Sign in'),
+      h('p', { class: 'small soft' }, 'This page can spend API credits and send mail, so it is behind a password.'),
+      h('div', { class: 'row' }, password, h('button', { class: 'primary', onclick: signIn }, 'Sign in')),
+      problem,
+    ),
+  );
+}
+
 async function load() {
   const res = await fetch('/api/state');
+  if (res.status === 401) return showLogin();
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({}));
+    return showLogin(error ?? `The server said ${res.status}.`);
+  }
   state = await res.json();
   render();
 }

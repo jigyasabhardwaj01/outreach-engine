@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { env, ROOT } from './env.js';
+import { NeonStore } from './store-neon.js';
 
 const stamp = (company) => ({ ...company, updatedAt: new Date().toISOString() });
 
@@ -83,6 +84,14 @@ export class JsonStore {
   }
 }
 
+/**
+ * Postgres when a DATABASE_URL is set, a file otherwise.
+ *
+ * A hosted deployment has no disk that survives a request, so there the file
+ * store is not a fallback but a bug: say so rather than silently losing work.
+ */
 export function createStore(settings = env) {
+  if (settings.DATABASE_URL) return new NeonStore({ url: settings.DATABASE_URL });
+  if (settings.VERCEL) throw new Error('DATABASE_URL is not set. A hosted deployment cannot use the file store.');
   return new JsonStore(path.join(settings.DATA_DIR || path.join(ROOT, 'data'), 'companies.json'));
 }

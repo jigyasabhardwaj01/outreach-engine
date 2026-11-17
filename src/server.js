@@ -1,14 +1,12 @@
-// The review page's server. It binds to localhost only: this page can run
-// every action, spend your API credits and send mail, and it has no login.
+// The local server: the same API as the hosted one, plus serving the page.
+// It binds to localhost, because without APP_PASSWORD there is no gate.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT } from './env.js';
+import { createApi } from './api.js';
 
-const json = (res, status, body) => {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-  res.end(JSON.stringify(body));
-};
+export { isSameOrigin } from './api.js';
 
 const readBody = (req, limit = 1_000_000) =>
   new Promise((resolve, reject) => {
@@ -30,27 +28,17 @@ const readBody = (req, limit = 1_000_000) =>
     req.on('error', reject);
   });
 
-/**
- * Only our own page may post actions — not some other site open in the same
- * browser. Without this, any page you visit could quietly spend your quota.
- */
-export function isSameOrigin(req) {
-  const origin = req.headers.origin;
-  if (!origin || !req.headers.host) return false;
-  try {
-    // Both carry the port, and a browser sends the Origin of the page that
-    // made the call — so comparing them is the whole check.
-    return new URL(origin).host === req.headers.host;
-  } catch {
-    return false;
-  }
-}
+const ROUTES = { '/api/state': 'state', '/api/action': 'action', '/api/login': 'login', '/api/logout': 'logout', '/api/health': 'health' };
 
 export function createServer({ actions, store, settings, page = path.join(ROOT, 'public', 'index.html') }) {
-  const port = Number(settings.PORT) || 3000;
+  const api = createApi({ actions, store, settings });
 
   return http.createServer(async (req, res) => {
     const url = req.url.split('?')[0];
+    const send = ({ status, body, headers = {} }) => {
+      res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
+      res.end(JSON.stringify(body));
+    };
 
     try {
       if (req.method === 'GET' && (url === '/' || url === '/index.html')) {
@@ -58,28 +46,13 @@ export function createServer({ actions, store, settings, page = path.join(ROOT, 
         return res.end(fs.readFileSync(page));
       }
 
-      if (req.method === 'GET' && url === '/api/state') {
-        return json(res, 200, {
-          companies: await store.all(),
-          emailTo: settings.EMAIL_TO ?? null,
-          reviewMode: String(settings.REVIEW_MODE ?? 'true').toLowerCase() !== 'false',
-        });
-      }
+      const route = ROUTES[url];
+      if (!route) return send({ status: 404, body: { error: 'Not found.' } });
 
-      if (url === '/api/action') {
-        if (req.method !== 'POST') return json(res, 405, { error: 'Use POST.' });
-        if (!isSameOrigin(req)) return json(res, 403, { error: 'Not allowed from there.' });
-
-        const { action, ...args } = await readBody(req);
-        if (!Object.hasOwn(actions, action)) return json(res, 400, { error: `No such action: ${action}` });
-
-        const result = await actions[action](args);
-        return json(res, 200, { ok: true, ...(result && typeof result === 'object' && !result.domain ? result : {}) });
-      }
-
-      return json(res, 404, { error: 'Not found.' });
+      const body = req.method === 'POST' ? await readBody(req) : {};
+      return send(await api[route]({ method: req.method, headers: req.headers, body }));
     } catch (error) {
-      return json(res, 500, { error: error.message });
+      return send({ status: 500, body: { error: error.message } });
     }
   });
 }
