@@ -1,0 +1,175 @@
+{
+  "northwind.io": {
+    "domain": "northwind.io",
+    "name": "Northwind",
+    "foundBy": "Job posts mentioning SOC 2",
+    "why": "Hiring a compliance lead.",
+    "status": "researched",
+    "decision": null,
+    "answers": {
+      "saas": "b2b_saas",
+      "employees": 84,
+      "certified": "not_certified",
+      "funding": "series_a_c",
+      "preparing": "yes"
+    },
+    "details": {
+      "saas": {
+        "label": "B2B SaaS",
+        "answer": "b2b_saas",
+        "value": null,
+        "evidence": {
+          "kind": "page",
+          "url": "https://northwind.io/",
+          "sourceDate": null,
+          "quote": "the workflow platform for mid-market finance teams",
+          "checkedAt": "2026-11-17"
+        },
+        "log": [
+          {
+            "source": "https://northwind.io/",
+            "outcome": "answered"
+          }
+        ]
+      },
+      "employees": {
+        "label": "Employee count",
+        "answer": 84,
+        "value": null,
+        "evidence": {
+          "kind": "search",
+          "url": "https://directory.example/northwind",
+          "sourceDate": "2026-09-02",
+          "quote": "a team of 84 across two offices",
+          "checkedAt": "2026-11-17"
+        },
+        "log": [
+          {
+            "source": "search: Northwind northwind.io number of employees",
+            "outcome": "answered"
+          }
+        ]
+      },
+      "certified": {
+        "label": "Certifications held",
+        "answer": "not_certified",
+        "value": null,
+        "evidence": {
+          "kind": "page",
+          "url": "https://northwind.io/security",
+          "sourceDate": null,
+          "quote": "Our SOC 2 Type II audit is currently in progress",
+          "checkedAt": "2026-11-17"
+        },
+        "log": [
+          {
+            "source": "https://northwind.io/security",
+            "outcome": "answered"
+          }
+        ]
+      },
+      "funding": {
+        "label": "Funding stage",
+        "answer": "series_a_c",
+        "value": null,
+        "evidence": null,
+        "log": [
+          {
+            "source": "search: Northwind funding round raised Series",
+            "outcome": "nothing conclusive here"
+          }
+        ]
+      },
+      "preparing": {
+        "label": "Preparing for an audit",
+        "answer": "yes",
+        "value": null,
+        "evidence": {
+          "kind": "page",
+          "url": "https://northwind.io/careers",
+          "sourceDate": null,
+          "quote": "hiring our first compliance lead to take us through SOC 2",
+          "checkedAt": "2026-11-17"
+        },
+        "log": [
+          {
+            "source": "https://northwind.io/careers",
+            "outcome": "answered"
+          }
+        ]
+      }
+    },
+    "verdict": {
+      "kind": "qualify",
+      "code": "preparing_for_audit",
+      "reason": "Evidence that it is preparing for a compliance audit.",
+      "by": "preparing",
+      "notes": [
+        "Funding stage is unknown."
+      ]
+    },
+    "lookups": 11
+  },
+  "harbourly.com": {
+    "domain": "harbourly.com",
+    "name": "Harbourly",
+    "foundBy": "Recent Series A funding",
+    "status": "drafted",
+    "decision": "approved",
+    "answers": {
+      "employees": 120
+    },
+    "details": {},
+    "verdict": {
+      "kind": "qualify",
+      "code": "enterprise_pressure",
+      "reason": "Has enterprise buyers without the certification they expect.",
+      "notes": []
+    },
+    "contact": {
+      "firstName": "Priya",
+      "lastName": "Raman",
+      "title": "Head of Security",
+      "email": "p@harbourly.com",
+      "role": "security",
+      "source": "Hunter",
+      "reason": "Head of Security owns security and compliance directly."
+    },
+    "email": {
+      "subject": "Your enterprise tier and SOC 2",
+      "body": "Hi Priya,\n\nI saw Harbourly launched an enterprise tier last month. It looks like security questionnaires land on your desk now.\n\nWorth a short call?\n\nSprinto",
+      "hook": "enterprise tier launch",
+      "hook_source_url": "https://harbourly.com/pricing",
+      "why_this_email": "They sell to enterprise without a certification.",
+      "pain_points": [
+        {
+          "pain": "Questionnaire load",
+          "why": "Enterprise buyers send them."
+        },
+        {
+          "pain": "Deals stalling",
+          "why": "No SOC 2 to point at."
+        }
+      ],
+      "issues": [
+        "The hook comes from something too old, or undated, to present as current."
+      ],
+      "status": "draft"
+    },
+    "updatedAt": "2026-11-17T10:35:33.128Z"
+  },
+  "pixelpals.app": {
+    "domain": "pixelpals.app",
+    "name": "PixelPals",
+    "foundBy": "Accelerator directories",
+    "status": "rejected",
+    "decision": "rejected",
+    "details": {},
+    "verdict": {
+      "kind": "reject",
+      "code": "not_saas",
+      "reason": "Not a B2B SaaS company.",
+      "notes": []
+    }
+  }
+}

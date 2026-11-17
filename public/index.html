@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Outreach review</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --card: #fff; --ink: #1a1a19; --soft: #6b6b66; --line: #e4e4e0;
+    --ok: #1f7a4d; --no: #a33a2a; --warn: #8a5a00; --warn-bg: #fdf6e7; --accent: #2c5ce6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16161a; --card: #1e1e23; --ink: #ececea; --soft: #9a9a94; --line: #32323a;
+      --ok: #6cc08b; --no: #e68a78; --warn: #e0b057; --warn-bg: #2b2516; --accent: #8fa8ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 80px; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 0; }
+  .soft { color: var(--soft); }
+  .small { font-size: 13px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .between { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  header { margin-bottom: 18px; }
+  .bar { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px 0; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+  button {
+    font: inherit; padding: 7px 13px; border-radius: 7px; border: 1px solid var(--line);
+    background: var(--card); color: var(--ink); cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--soft); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  button.danger { color: var(--no); }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .tab { border-radius: 999px; }
+  .tab[aria-selected="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 11px; padding: 16px; margin-bottom: 12px; }
+  .verdict { font-weight: 600; }
+  .verdict.qualify { color: var(--ok); }
+  .verdict.reject { color: var(--no); }
+  .note { background: var(--warn-bg); color: var(--warn); border-radius: 7px; padding: 7px 10px; margin: 8px 0 0; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--soft); font-weight: 500; }
+  blockquote { margin: 0; color: var(--soft); font-style: italic; }
+  a { color: var(--accent); }
+  textarea, input[type=text] {
+    font: inherit; width: 100%; padding: 9px 11px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  }
+  textarea { min-height: 150px; resize: vertical; }
+  label { display: block; margin: 10px 0 4px; }
+  details > summary { cursor: pointer; color: var(--soft); font-size: 13px; margin-top: 8px; }
+  .empty { color: var(--soft); padding: 28px 0; text-align: center; }
+  .pill { font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; color: var(--soft); }
+  #status { min-height: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="between">
+      <h1>Outreach review</h1>
+      <span class="small soft" id="sendingTo"></span>
+    </div>
+    <p class="small soft" id="status" role="status" aria-live="polite"></p>
+  </header>
+
+  <div class="bar row">
+    <button id="discover">Find 10 companies</button>
+    <button id="research">Research shortlisted</button>
+    <span class="small soft" id="waiting"></span>
+  </div>
+
+  <div class="tabs" role="tablist"></div>
+  <div id="list"></div>
+</main>
+
+<script type="module">
+const STAGES = [
+  { id: 'review',  name: 'To review', has: (c) => c.status === 'researched' && !c.decision },
+  { id: 'emails',  name: 'Emails',    has: (c) => ['drafted', 'no_contact', 'approved', 'contact_found'].includes(c.status) },
+  { id: 'waiting', name: 'Shortlist', has: (c) => ['shortlisted', 'researching'].includes(c.status) },
+  { id: 'sent',    name: 'Sent',      has: (c) => c.status === 'sent' },
+  { id: 'out',     name: 'Rejected',  has: (c) => ['rejected', 'email_rejected'].includes(c.status) },
+];
+
+let state = { companies: {} };
+let stage = 'review';
+let busy = false;
+
+const $ = (sel) => document.querySelector(sel);
+
+// Create an element, set properties or attributes, append children.
+function h(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (key === 'class') node.className = value;
+    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    else if (key in node) node[key] = value;
+    else node.setAttribute(key, value);
+  }
+  for (const child of children.flat()) if (child != null && child !== false) node.append(child);
+  return node;
+}
+
+const say = (message) => { $('#status').textContent = message; };
+
+async function load() {
+  const res = await fetch('/api/state');
+  state = await res.json();
+  render();
+}
+
+async function call(action, args = {}) {
+  const res = await fetch('/api/action', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...args }),
+  });
+  const body = await res.json().catch(() => ({ error: 'The server said nothing.' }));
+  if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+  return body;
+}
+
+// Every button goes through here, so two things can never run at once and the
+// page always reloads the real state afterwards.
+async function run(message, work) {
+  if (busy) return;
+  busy = true;
+  render();
+  say(message + '…');
+  try {
+    await work();
+    say('Done.');
+  } catch (error) {
+    say(`Stopped: ${error.message}`);
+  } finally {
+    busy = false;
+    await load();
+  }
+}
+
+// Research is asked for one question at a time, so nothing runs long and
+// closing the tab costs at most the question in flight.
+async function researchAll() {
+  const waiting = Object.values(state.companies).filter((c) => ['shortlisted', 'researching'].includes(c.status));
+  for (const [index, company] of waiting.entries()) {
+    for (let step = 0; step < 60; step++) {
+      const result = await call('researchStep', { domain: company.domain });
+      if (result.done) break;
+      say(`${company.domain} (${index + 1} of ${waiting.length}): ${result.next ?? 'thinking'}…`);
+    }
+  }
+}
+
+const evidenceCell = (detail) => {
+  if (!detail.evidence) return h('span', { class: 'soft' }, 'nothing found');
+  if (detail.evidence.kind === 'absence') return h('span', { class: 'soft' }, 'not mentioned anywhere we looked');
+  return h('div', {},
+    h('blockquote', {}, `“${detail.evidence.quote}”`),
+    detail.evidence.url
+      ? h('a', { class: 'small', href: detail.evidence.url, target: '_blank', rel: 'noreferrer noopener' },
+          new URL(detail.evidence.url).hostname + (detail.evidence.sourceDate ? ` · ${detail.evidence.sourceDate}` : ''))
+      : h('span', { class: 'small soft' }, 'no link'),
+  );
+};
+
+const evidenceTable = (company) => h('table', {},
+  h('thead', {}, h('tr', {}, h('th', {}, 'Question'), h('th', {}, 'Answer'), h('th', {}, 'Because'))),
+  h('tbody', {}, Object.values(company.details ?? {}).map((detail) =>
+    h('tr', {},
+      h('td', {}, detail.label),
+      h('td', {}, String(detail.answer) + (detail.value ? ` (${detail.value})` : '')),
+      h('td', {}, evidenceCell(detail)),
+    ))),
+);
+
+const auditTrail = (company) => h('details', {},
+  h('summary', {}, 'Where we looked'),
+  h('table', {}, h('tbody', {},
+    Object.values(company.details ?? {}).flatMap((detail) =>
+      (detail.log ?? []).map((line) => h('tr', {}, h('td', { class: 'small soft' }, detail.label), h('td', { class: 'small' }, line.source ?? ''), h('td', { class: 'small soft' }, line.outcome)))),
+  )),
+);
+
+function companyCard(company) {
+  const verdict = company.verdict ?? {};
+  return h('article', { class: 'card' },
+    h('div', { class: 'between' },
+      h('h2', {}, company.name),
+      h('a', { class: 'small', href: `https://${company.domain}`, target: '_blank', rel: 'noreferrer noopener' }, company.domain),
+    ),
+    h('p', { class: 'small' },
+      h('span', { class: `verdict ${verdict.kind}` }, verdict.kind === 'qualify' ? 'Worth writing to' : 'Not a fit'),
+      ' — ', verdict.reason ?? '',
+      h('span', { class: 'pill' }, ` ${verdict.code ?? ''} `),
+    ),
+    (verdict.notes ?? []).map((note) => h('p', { class: 'note small' }, note)),
+    company.why ? h('p', { class: 'small soft' }, `Found by ${company.foundBy}: ${company.why}`) : null,
+    evidenceTable(company),
+    auditTrail(company),
+    h('div', { class: 'row', style: 'margin-top:14px' },
+      h('button', { class: 'primary', disabled: busy, onclick: () => run(`Approving ${company.domain}`, () => call('decide', { domain: company.domain, decision: 'approve' })) },
+        'Approve and write'),
+      h('button', { class: 'danger', disabled: busy, onclick: () => run(`Rejecting ${company.domain}`, () => call('decide', { domain: company.domain, decision: 'reject' })) },
+        'Reject'),
+      h('button', { disabled: busy, onclick: () => run(`Researching ${company.domain} again`, () => call('researchAgain', { domain: company.domain })) },
+        'Research again'),
+    ),
+  );
+}
+
+function contactForm(company) {
+  const first = h('input', { type: 'text', placeholder: 'First name' });
+  const last = h('input', { type: 'text', placeholder: 'Last name (optional)' });
+  const title = h('input', { type: 'text', placeholder: 'Job title' });
+  return h('article', { class: 'card' },
+    h('h2', {}, company.name),
+    h('p', { class: 'small soft' }, 'Nobody suitable was found. Add someone yourself, and the draft will follow.'),
+    h('div', { class: 'row' }, first, last, title),
+    h('div', { class: 'row', style: 'margin-top:10px' },
+      h('button', {
+        class: 'primary', disabled: busy,
+        onclick: () => run(`Drafting for ${company.domain}`, () => call('setContact', { domain: company.domain, firstName: first.value, lastName: last.value, title: title.value })),
+      }, 'Use this contact'),
+    ),
+  );
+}
+
+function emailCard(company) {
+  if (company.status === 'no_contact') return contactForm(company);
+  if (!company.email) {
+    return h('article', { class: 'card' },
+      h('h2', {}, company.name),
+      h('p', { class: 'small soft' }, 'Approved, but the draft did not finish.'),
+      h('button', { disabled: busy, onclick: () => run(`Finishing ${company.domain}`, () => call('resume', { domain: company.domain })) }, 'Carry on'),
+    );
+  }
+
+  const subject = h('input', { type: 'text', value: company.email.subject ?? '' });
+  const body = h('textarea', {}, company.email.body ?? '');
+  const feedback = h('input', { type: 'text', placeholder: 'What should change?' });
+  const contact = company.contact ?? {};
+
+  return h('article', { class: 'card' },
+    h('div', { class: 'between' },
+      h('h2', {}, company.name),
+      h('span', { class: 'small soft' }, `${contact.firstName ?? ''} ${contact.lastName ?? ''} — ${contact.title ?? ''}`),
+    ),
+    contact.reason ? h('p', { class: 'small soft' }, contact.reason) : null,
+    (company.email.issues ?? []).map((issue) => h('p', { class: 'note small' }, issue)),
+    h('details', {},
+      h('summary', {}, 'Why this email'),
+      h('p', { class: 'small' }, company.email.why_this_email ?? ''),
+      h('ul', { class: 'small' }, (company.email.pain_points ?? []).map((point) => h('li', {}, `${point.pain} — ${point.why}`))),
+      company.email.hook_source_url
+        ? h('p', { class: 'small' }, 'Hook from ', h('a', { href: company.email.hook_source_url, target: '_blank', rel: 'noreferrer noopener' }, company.email.hook_source_url))
+        : null,
+    ),
+    h('label', {}, 'Subject'), subject,
+    h('label', {}, 'Body'), body,
+    h('div', { class: 'row', style: 'margin-top:12px' },
+      h('button', {
+        class: 'primary', disabled: busy,
+        onclick: () => run(`Sending ${company.domain}`, () => call('send', { domain: company.domain, subject: subject.value, body: body.value })),
+      }, `Send to ${state.emailTo ?? 'you'}`),
+      h('button', { class: 'danger', disabled: busy, onclick: () => run(`Rejecting the draft`, () => call('rejectEmail', { domain: company.domain })) }, 'Reject draft'),
+    ),
+    h('div', { class: 'row', style: 'margin-top:10px' },
+      feedback,
+      h('button', { disabled: busy, onclick: () => run('Rewriting', () => call('redraft', { domain: company.domain, feedback: feedback.value })) }, 'Rewrite'),
+    ),
+  );
+}
+
+const plainRow = (company) => h('article', { class: 'card' },
+  h('div', { class: 'between' },
+    h('div', {}, h('strong', {}, company.name), ' ', h('span', { class: 'small soft' }, company.domain)),
+    h('span', { class: 'small soft' }, company.verdict?.reason ?? company.status.replace(/_/g, ' ')),
+  ),
+  company.email?.sentAt ? h('p', { class: 'small soft' }, `Sent to ${company.email.sentTo} on ${company.email.sentAt.slice(0, 10)}`) : null,
+);
+
+function render() {
+  const companies = Object.values(state.companies ?? {});
+  $('#sendingTo').textContent = state.emailTo ? `Everything sends to ${state.emailTo}` : 'EMAIL_TO is not set';
+
+  const tabs = $('.tabs');
+  tabs.replaceChildren(...STAGES.map((s) => {
+    const count = companies.filter(s.has).length;
+    return h('button', {
+      class: 'tab', role: 'tab', 'aria-selected': String(s.id === stage),
+      onclick: () => { stage = s.id; render(); },
+    }, `${s.name} ${count}`);
+  }));
+
+  for (const id of ['discover', 'research']) $(`#${id}`).disabled = busy;
+  const waiting = companies.filter((c) => ['shortlisted', 'researching'].includes(c.status)).length;
+  $('#waiting').textContent = waiting ? `${waiting} waiting to be researched` : '';
+
+  const current = STAGES.find((s) => s.id === stage);
+  const mine = companies.filter(current.has);
+  const draw = stage === 'review' ? companyCard : stage === 'emails' ? emailCard : plainRow;
+
+  $('#list').replaceChildren(
+    ...(mine.length ? mine.map(draw) : [h('p', { class: 'empty' }, 'Nothing here.')]),
+  );
+}
+
+$('#discover').onclick = () => run('Searching for companies', async () => {
+  const { added } = await call('discover', { limit: 10 });
+  say(`Shortlisted ${added}.`);
+});
+$('#research').onclick = () => run('Researching', researchAll);
+
+load();
+</script>
+</body>
+</html>

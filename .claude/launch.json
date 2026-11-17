@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "review",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["cli.js", "review"],
+      "port": 3000
+    }
+  ]
+}

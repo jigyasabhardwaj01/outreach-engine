@@ -35,6 +35,37 @@ cp .env.example .env
 npm test
 ```
 
+To see the review page without any API keys, load the demo companies first:
+
+```bash
+mkdir -p data && cp fixtures/demo.json data/companies.json && node cli.js review
+```
+
+Then fill in `.env` and use it for real:
+
+```bash
+node cli.js doctor
+```
+
+| Command | What it does |
+|---|---|
+| `node cli.js review` | The review page at localhost:3000 — the normal way to use this |
+| `node cli.js discover 10` | Fill the shortlist from the profile's searches |
+| `node cli.js add acme.com` | Shortlist companies you already know |
+| `node cli.js research` | Research everything shortlisted, to the end |
+| `node cli.js doctor` | Check the settings, the keys and the model |
+
+## Your two checkpoints
+
+The page asks you twice. First whether a company is worth writing to at all,
+with every answer shown next to the quote and the link it came from, and a
+"where we looked" trail for the questions that found nothing. Then whether the
+email is worth sending, with any failed checks across the top, the subject and
+body editable, and a box to say what should change if you want it rewritten.
+
+Research runs one question per request, so nothing long-running sits in a
+single call and closing the tab costs you at most the question in flight.
+
 ## Where things are
 
 | Path | What it does |
@@ -67,6 +98,6 @@ Failing drafts go back to the model with the specific complaint, up to three
 times. A draft that still fails is kept, with its problems attached, so you can
 see what's wrong rather than having it quietly sent.
 
-## Still to build
+## Not built
 
-The review page and the CLI.
+Nothing, for the campaign in `profiles/`. A hosted version would need a shared store and a login — the page has none, so keep it on your own machine.
