@@ -1,7 +1,7 @@
 // The API, as plain functions from a request to a response. The local server
 // and the hosted functions are both thin wrappers around this, so there is one
 // implementation of what every route does and what it lets through.
-import { authorize, loginResponse, logoutResponse } from './auth.js';
+import { authorize, loginResponse, logoutResponse, signedIn, isOpen } from './auth.js';
 
 const ok = (body) => ({ status: 200, body });
 const fail = (status, error) => ({ status, body: { error } });
@@ -28,8 +28,8 @@ export function createApi({ actions, store, settings }) {
   return {
     /** Is this deployment actually wired up? Safe to call signed out. */
     async health() {
-      const open = String(settings.PUBLIC_ACCESS ?? '').toLowerCase() === 'true';
-      const access = settings.APP_PASSWORD ? 'password' : open ? 'open to anyone' : 'closed';
+      const open = isOpen(settings);
+      const access = settings.APP_PASSWORD ? (open ? 'public to read, password to act' : 'password') : open ? 'open to anyone' : 'closed';
 
       const missing = ['DATABASE_URL', 'GEMINI_API_KEY', 'EMAIL_TO'].filter((name) => !settings[name]);
       // Absent on purpose is not the same as missing, but with neither a
@@ -60,8 +60,12 @@ export function createApi({ actions, store, settings }) {
 
       return ok({
         companies: await store.all(),
-        emailTo: settings.EMAIL_TO ?? null,
+        emailTo: settings.EMAIL_TO || null,
         reviewMode: String(settings.REVIEW_MODE ?? 'true').toLowerCase() !== 'false',
+        // The page needs to know whether to offer the buttons or a sign-in.
+        signedIn: signedIn(req, settings) || !settings.APP_PASSWORD,
+        needsPassword: Boolean(settings.APP_PASSWORD),
+        ready: Boolean(settings.GEMINI_API_KEY),
       });
     },
 
@@ -69,7 +73,9 @@ export function createApi({ actions, store, settings }) {
       if (req.method !== 'POST') return fail(405, 'Use POST.');
       if (!isSameOrigin(req)) return fail(403, 'Not allowed from there.');
 
-      const allowed = authorize(req, settings);
+      // Acting is gated more tightly than reading: every action either spends
+      // API credits, writes to the store, or sends mail.
+      const allowed = authorize(req, settings, { write: true });
       if (!allowed.ok) return fail(allowed.status, allowed.error);
 
       const { action, ...args } = req.body ?? {};

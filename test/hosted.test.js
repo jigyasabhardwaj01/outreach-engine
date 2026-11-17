@@ -28,9 +28,21 @@ test('a hosted deployment is open only when it says so outright', () => {
   }
 });
 
-test('a password still wins over PUBLIC_ACCESS', () => {
+test('open to read, password to act', () => {
   const settings = { VERCEL: '1', APP_PASSWORD: 'hunter2', PUBLIC_ACCESS: 'true' };
-  assert.equal(authorize({ headers: {} }, settings).status, 401, 'set a password and it is enforced');
+
+  assert.equal(authorize({ headers: {} }, settings).ok, true, 'anyone may look');
+  const acting = authorize({ headers: {} }, settings, { write: true });
+  assert.equal(acting.ok, false, 'but not spend');
+  assert.equal(acting.status, 401);
+  assert.match(acting.error, /spends API credits or sends mail/);
+
+  assert.equal(authorize(withCookie(tokenFor('hunter2')), settings, { write: true }).ok, true, 'signed in, you may');
+});
+
+test('without PUBLIC_ACCESS, a password guards reading too', () => {
+  assert.equal(authorize({ headers: {} }, hosted).status, 401);
+  assert.equal(authorize(withCookie(tokenFor('hunter2')), hosted, { write: true }).ok, true);
 });
 
 test('hosted, only the right cookie gets in', () => {

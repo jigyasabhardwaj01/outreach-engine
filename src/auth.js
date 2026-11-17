@@ -33,22 +33,36 @@ export const parseCookies = (header = '') =>
       }),
   );
 
+export const isOpen = (settings) => String(settings.PUBLIC_ACCESS ?? '').toLowerCase() === 'true';
+
+/** Is this request carrying a valid session? */
+export function signedIn(req, settings) {
+  if (!settings.APP_PASSWORD) return false;
+  return sameSecret(parseCookies(req.headers?.cookie)[COOKIE], tokenFor(settings.APP_PASSWORD));
+}
+
 /**
- * Who is allowed in.
+ * Who is allowed to do what.
  *
- * - hosted with APP_PASSWORD     -> whoever has the cookie
- * - hosted with PUBLIC_ACCESS    -> everyone, on purpose (see below)
- * - hosted with neither          -> nobody, with an explanation
- * - local with no APP_PASSWORD   -> you, because it is your own machine
+ * Reading and doing are separated, because they carry different costs. Looking
+ * at what the research found is free; running more of it spends API credits,
+ * and sending puts mail in someone's inbox. So a deployment can be readable by
+ * anyone while still refusing to act for them.
+ *
+ * - password + PUBLIC_ACCESS  -> anyone may read, only you may act
+ * - password alone            -> only you, for either
+ * - PUBLIC_ACCESS alone       -> anyone, for either (nothing to check against)
+ * - hosted with neither       -> nobody, with an explanation
+ * - local with no password    -> you, because it is your own machine
  *
  * PUBLIC_ACCESS has to be set deliberately. An open deployment is a
  * defensible choice; becoming open because a password went missing is not,
  * so a lost APP_PASSWORD closes the site rather than unlocking it.
  */
-export function authorize(req, settings) {
+export function authorize(req, settings, { write = false } = {}) {
   const password = settings.APP_PASSWORD;
   const hosted = Boolean(settings.VERCEL);
-  const open = String(settings.PUBLIC_ACCESS ?? '').toLowerCase() === 'true';
+  const open = isOpen(settings);
 
   if (!password) {
     if (hosted && !open) {
@@ -57,9 +71,14 @@ export function authorize(req, settings) {
     return { ok: true };
   }
 
-  const cookies = parseCookies(req.headers?.cookie);
-  if (sameSecret(cookies[COOKIE], tokenFor(password))) return { ok: true };
-  return { ok: false, status: 401, error: 'Sign in first.' };
+  if (signedIn(req, settings)) return { ok: true };
+  if (!write && open) return { ok: true };
+
+  return {
+    ok: false,
+    status: 401,
+    error: write ? 'Sign in to run this: it spends API credits or sends mail.' : 'Sign in first.',
+  };
 }
 
 export function loginResponse(given, settings) {

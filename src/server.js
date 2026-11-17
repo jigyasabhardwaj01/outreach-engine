@@ -29,9 +29,25 @@ const readBody = (req, limit = 1_000_000) =>
   });
 
 const ROUTES = { '/api/state': 'state', '/api/action': 'action', '/api/login': 'login', '/api/logout': 'logout', '/api/health': 'health' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
+
+/**
+ * Hosted, Vercel serves public/ as static files. Locally that is this: the
+ * same files, by name, and nothing outside the folder.
+ */
+function staticFile(dir, url) {
+  const name = url === '/' ? 'index.html' : url.slice(1);
+  const type = TYPES[path.extname(name)];
+  if (!type || name.includes('..')) return null;
+
+  const file = path.join(dir, name);
+  if (!file.startsWith(dir + path.sep) || !fs.existsSync(file)) return null;
+  return { file, type };
+}
 
 export function createServer({ actions, store, settings, page = path.join(ROOT, 'public', 'index.html') }) {
   const api = createApi({ actions, store, settings });
+  const publicDir = path.dirname(page);
 
   return http.createServer(async (req, res) => {
     const url = req.url.split('?')[0];
@@ -41,9 +57,11 @@ export function createServer({ actions, store, settings, page = path.join(ROOT, 
     };
 
     try {
-      if (req.method === 'GET' && (url === '/' || url === '/index.html')) {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        return res.end(fs.readFileSync(page));
+      if (req.method === 'GET' && !url.startsWith('/api/')) {
+        const found = staticFile(publicDir, url);
+        if (!found) return send({ status: 404, body: { error: 'Not found.' } });
+        res.writeHead(200, { 'Content-Type': `${found.type}; charset=utf-8`, 'Cache-Control': 'no-store' });
+        return res.end(fs.readFileSync(found.file));
       }
 
       const route = ROUTES[url];
