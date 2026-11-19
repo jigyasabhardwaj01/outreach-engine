@@ -29,12 +29,63 @@ export function parseEnvFile(text) {
   return out;
 }
 
+/**
+ * The same setting under the names people actually type.
+ *
+ * Environment variable names are case-sensitive, so GEMINI_API_KEY pasted in
+ * as Gemini_api_key is simply invisible — and the app reports the key as
+ * missing while the dashboard plainly shows it there. That is a miserable ten
+ * minutes to debug, and costs nothing to prevent.
+ */
+const ALIASES = {
+  HUNTERIO_API_KEY: 'HUNTER_API_KEY',
+  HUNTER_IO_API_KEY: 'HUNTER_API_KEY',
+  HUNTER_KEY: 'HUNTER_API_KEY',
+  GEMINI_KEY: 'GEMINI_API_KEY',
+  GOOGLE_API_KEY: 'GEMINI_API_KEY',
+  GOOGLE_GEMINI_API_KEY: 'GEMINI_API_KEY',
+  GMAIL_PASSWORD: 'GMAIL_APP_PASSWORD',
+  GMAIL_APP_PASSWORD_: 'GMAIL_APP_PASSWORD',
+  MAIL_TO: 'EMAIL_TO',
+  TO_EMAIL: 'EMAIL_TO',
+  RESEND_KEY: 'RESEND_API_KEY',
+  POSTGRES_URL: 'DATABASE_URL',
+};
+
+export const canonicalName = (name) => {
+  const upper = String(name).toUpperCase();
+  return ALIASES[upper] ?? upper;
+};
+
+/** Which settings were found under a name other than their own. */
+export const aliasesUsed = [];
+
 export function loadEnv({ root = ROOT, processEnv = process.env } = {}) {
   const file = path.join(root, '.env');
   const fromFile = fs.existsSync(file) ? parseEnvFile(fs.readFileSync(file, 'utf8')) : {};
-  const env = { ...DEFAULTS, ...fromFile };
-  // A platform variable overrides the file, but an empty one does not erase it.
-  for (const [key, value] of Object.entries(processEnv)) if (value !== '' && value !== undefined) env[key] = value;
+  const env = { ...DEFAULTS };
+  const noted = [];
+
+  const take = (source) => {
+    // Normalised names first, exact names second, so an exactly-named value
+    // always wins over one that had to be guessed at.
+    for (const [key, value] of Object.entries(source)) {
+      if (value === '' || value === undefined) continue;
+      const name = canonicalName(key);
+      if (name !== key) noted.push({ found: key, read_as: name });
+      env[name] = value;
+    }
+    for (const [key, value] of Object.entries(source)) {
+      if (value === '' || value === undefined) continue;
+      env[key] = value;
+    }
+  };
+
+  take(fromFile);
+  take(processEnv);
+
+  aliasesUsed.length = 0;
+  aliasesUsed.push(...noted.filter((n) => Object.hasOwn(env, n.read_as)));
   return env;
 }
 

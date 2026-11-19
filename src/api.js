@@ -2,8 +2,11 @@
 // and the hosted functions are both thin wrappers around this, so there is one
 // implementation of what every route does and what it lets through.
 import { authorize, loginResponse, logoutResponse, signedIn, isOpen } from './auth.js';
+import { liveCheck } from './selfcheck.js';
+import { aliasesUsed } from './env.js';
 
-const ok = (body) => ({ status: 200, body });
+const ok_ = (body) => ({ status: 200, body });
+const ok = ok_;
 const fail = (status, error) => ({ status, body: { error } });
 
 /** The host as the browser sees it, behind a proxy or not. */
@@ -43,7 +46,17 @@ export function createApi({ actions, store, settings }) {
           database = `unreachable: ${error.message}`;
         }
       }
-      return ok({ ready: missing.length === 0, missing, access, database });
+      return ok({ ready: missing.length === 0, missing, access, database, readUnderOtherNames: aliasesUsed });
+    },
+
+    /**
+     * Ask every configured service one cheap question. This is the only way
+     * to tell a key that is wrong from a key that is missing, and a hosted
+     * deployment is exactly where you cannot just run the CLI.
+     */
+    async selfcheck() {
+      const { steps, ok } = await liveCheck({ settings });
+      return ok_({ ok, steps, readUnderOtherNames: aliasesUsed });
     },
 
     async login(req) {

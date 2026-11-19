@@ -28,7 +28,7 @@ const readBody = (req, limit = 1_000_000) =>
     req.on('error', reject);
   });
 
-const ROUTES = { '/api/state': 'state', '/api/action': 'action', '/api/login': 'login', '/api/logout': 'logout', '/api/health': 'health' };
+const ROUTES = { '/api/state': 'state', '/api/action': 'action', '/api/login': 'login', '/api/logout': 'logout', '/api/health': 'health', '/api/selfcheck': 'selfcheck' };
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 
 /**

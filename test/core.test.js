@@ -102,3 +102,43 @@ test('the example profile is valid and ordered cheapest-first', () => {
   assert.ok(profile.excludeDomains.includes('sprinto.com'));
   assert.equal(typeof profile.contacts.order(30)[0], 'string');
 });
+
+// ---------------------------------------------------------------- settings read leniently
+
+test('a key pasted under a differently-cased name is still found', async () => {
+  const { loadEnv, canonicalName } = await import('../src/env.js');
+
+  // Exactly what landed in Vercel: the right secret, the wrong spelling.
+  const env = loadEnv({ root: '/nonexistent', processEnv: { Gemini_api_key: 'g-key', hunterio_api_key: 'h-key' } });
+  assert.equal(env.GEMINI_API_KEY, 'g-key');
+  assert.equal(env.HUNTER_API_KEY, 'h-key');
+
+  assert.equal(canonicalName('gemini_api_key'), 'GEMINI_API_KEY');
+  assert.equal(canonicalName('GOOGLE_API_KEY'), 'GEMINI_API_KEY');
+  assert.equal(canonicalName('SOMETHING_ELSE'), 'SOMETHING_ELSE');
+});
+
+test('an exactly-named value beats one that had to be guessed at', async () => {
+  const { loadEnv } = await import('../src/env.js');
+  const env = loadEnv({ root: '/nonexistent', processEnv: { GEMINI_API_KEY: 'right', Gemini_api_key: 'wrong' } });
+  assert.equal(env.GEMINI_API_KEY, 'right');
+});
+
+test('the aliases that were needed are recorded, so the fix can be suggested', async () => {
+  const { loadEnv, aliasesUsed } = await import('../src/env.js');
+  loadEnv({ root: '/nonexistent', processEnv: { hunterio_api_key: 'h' } });
+  assert.deepEqual(aliasesUsed, [{ found: 'hunterio_api_key', read_as: 'HUNTER_API_KEY' }]);
+});
+
+test('an empty value never overwrites a real one, whatever it is called', async () => {
+  const { loadEnv } = await import('../src/env.js');
+  const env = loadEnv({ root: '/nonexistent', processEnv: { GEMINI_API_KEY: 'real', gemini_api_key: '' } });
+  assert.equal(env.GEMINI_API_KEY, 'real');
+});
+
+test('defaults still apply when nothing is set', async () => {
+  const { loadEnv } = await import('../src/env.js');
+  const env = loadEnv({ root: '/nonexistent', processEnv: {} });
+  assert.equal(env.REVIEW_MODE, 'true');
+  assert.ok(env.GEMINI_MODEL);
+});
