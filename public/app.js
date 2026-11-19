@@ -3,6 +3,7 @@
 import {
   STAGES, stageById, companiesIn, countsByStage, firstBusyStage, awaitingResearch,
   PIPELINE, pipelineCounts, furthestStage, bannerFor, researchQueueLine,
+  metrics, formatDuration, asPercent,
   actionState, verdictWording, answerWording, evidenceWording, sourceLabel, wordCount, sendLabel, summaryLine, researchProgress,
 } from './view.js';
 
@@ -227,6 +228,27 @@ function emailCard(company) {
   );
 }
 
+function handoffCard(company) {
+  const handoff = company.handoff ?? {};
+  const answered = Object.values(company.progress?.details ?? {}).filter((d) => d.evidence);
+
+  return h('article', { class: 'card' },
+    h('div', { class: 'between' },
+      h('h2', {}, company.name ?? company.domain),
+      link(`https://${company.domain}`, company.domain),
+    ),
+    h('p', { class: 'note small' }, handoff.reason ?? 'The system stopped before it could decide.'),
+    answered.length
+      ? h('p', { class: 'small soft' }, `Answered before stopping: ${answered.map((d) => d.label).join(', ')}.`)
+      : h('p', { class: 'small soft' }, 'Nothing was answered before it stopped.'),
+    (handoff.unanswered ?? []).length ? h('p', { class: 'small soft' }, `Still open: ${handoff.unanswered.join(', ')}.`) : null,
+    h('div', { class: 'row actions' },
+      actionButton('Try again', { onclick: () => run(`Reopening ${company.domain}`, () => call('researchAgain', { domain: company.domain })) }),
+      actionButton('Reject', { danger: true, needs: 'none', onclick: () => run(`Rejecting ${company.domain}`, () => call('decide', { domain: company.domain, decision: 'reject' })) }),
+    ),
+  );
+}
+
 const shortlistRow = (company) => {
   const progress = researchProgress(company);
   return h('article', { class: 'card tight' },
@@ -377,6 +399,23 @@ function renderBanner() {
   $('#banner').replaceChildren(h('strong', {}, title), detail ? h('span', {}, detail) : null);
 }
 
+function renderMetrics() {
+  const m = metrics(state.companies);
+  if (!m.researched && !m.drafted) return $('#metrics').replaceChildren();
+
+  const stat = (label, value, hint) =>
+    h('div', { class: 'stat', title: hint ?? '' }, h('span', { class: 'figure' }, value), h('span', { class: 'label' }, label));
+
+  $('#metrics').replaceChildren(
+    stat('per company', formatDuration(m.averageMs), 'Average research time. The brief asks for under two minutes, against 15-20 by hand.'),
+    stat('lookups each', m.lookupsPerCompany === null ? '—' : String(m.lookupsPerCompany), 'Pages fetched and searches run per company.'),
+    stat('drafts rewritten', asPercent(m.rewriteRate), 'Rewrite more than half and the system is costing you time, not saving it.'),
+    stat('contacts found', asPercent(m.contactRate), 'How often a usable contact turned up.'),
+    stat('sent', String(m.sent), 'Emails sent to your own address.'),
+    m.handedBack ? stat('handed back', String(m.handedBack), 'Stopped at the lookup cap and left for you.') : null,
+  );
+}
+
 function renderTabs() {
   const counts = countsByStage(state.companies);
   $('.tabs').replaceChildren(...STAGES.map((item) =>
@@ -393,11 +432,12 @@ function render() {
   renderRail();
   renderToolbar();
   renderBanner();
+  renderMetrics();
   renderTabs();
 
   const current = stageById(stage);
   const mine = companiesIn(state.companies, current.id);
-  const draw = { review: companyCard, emails: emailCard, waiting: shortlistRow }[current.id] ?? plainRow;
+  const draw = { review: companyCard, emails: emailCard, waiting: shortlistRow, handoff: handoffCard }[current.id] ?? plainRow;
 
   $('#list').replaceChildren(
     ...(mine.length ? mine.map(draw) : [h('p', { class: 'empty' }, current.empty)]),

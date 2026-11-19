@@ -56,11 +56,36 @@ node cli.js doctor
 
 | Command | What it does |
 |---|---|
+| `node cli.js run acme.com b.io` | All seven steps over a list of domains, hands-off |
+| `node cli.js verify` | Runs the whole pipeline against a stand-in web and model, and says which steps work. No keys, no network, no cost |
 | `node cli.js review` | The review page at localhost:3000 — the normal way to use this |
 | `node cli.js discover 10` | Fill the shortlist from the profile's searches |
 | `node cli.js add acme.com` | Shortlist companies you already know |
 | `node cli.js research` | Research everything shortlisted, to the end |
 | `node cli.js doctor` | Check the settings, the keys and the model |
+
+## The seven steps
+
+1. **Scrape** the company's public pages — `src/web.js`, politely: robots.txt
+   first, one request per host per second.
+2. **Extract** structured answers from what came back — `src/research.js`.
+3. **Qualify** against the profile, fetching more when the first page is thin.
+   The loop stops at the first answer that decides, and at a lookup cap.
+4. **Find the contact** — `src/contacts.js`, via Hunter, in the profile's order.
+5. **Name two pain points** for that person, from the evidence — `src/draft.js`.
+6. **Draft** the email, by name, with a hook the research supports.
+7. **Send** it to `EMAIL_TO`, over Gmail or Resend — `src/mailer.js`.
+
+`node cli.js verify` runs all seven against stand-ins and tells you which work.
+
+## When it doesn't know enough
+
+Two limits, both deliberate. Questions stop at the first answer that decides,
+so a company rejected on headcount never costs the rest. And a company that
+exhausts its lookup budget is **handed back**, not guessed at: it lands in the
+"Needs you" tab saying what it answered and what is still open. A cap that
+silently produced "insufficient evidence" would turn a budget decision into a
+verdict about the company.
 
 ## Your two checkpoints
 

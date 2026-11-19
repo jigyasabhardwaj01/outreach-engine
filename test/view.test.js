@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STAGES, stageById, companiesIn, countsByStage, firstBusyStage, awaitingResearch,
+  metrics, formatDuration, asPercent,
   PIPELINE, pipelineStageOf, pipelineCounts, furthestStage, bannerFor, researchQueueLine,
   actionState, verdictWording, answerWording, evidenceWording, sourceLabel, formatDate, wordCount, sendLabel, summaryLine, researchProgress,
 } from '../public/view.js';
@@ -30,7 +31,7 @@ test('a decided company leaves the review tab', () => {
 });
 
 test('the counts add up and the shortlist includes work in progress', () => {
-  assert.deepEqual(countsByStage(companies), { review: 1, emails: 2, waiting: 2, sent: 1, out: 1 });
+  assert.deepEqual(countsByStage(companies), { review: 1, handoff: 0, emails: 2, waiting: 2, sent: 1, out: 1 });
   assert.equal(awaitingResearch(companies), 2, 'shortlisted and mid-research both still need work');
 });
 
@@ -172,4 +173,74 @@ test('the research queue names what is waiting, then stops naming', () => {
   assert.equal(researchQueueLine(many, 8), '3 waiting for research: a.com, b.com, c.com');
   assert.equal(researchQueueLine(many, 2), '3 waiting for research: a.com, b.com and 1 more');
   assert.match(researchQueueLine({}), /^Nothing is waiting/);
+});
+
+// ---------------------------------------------------------------- the measurement plan
+
+const measured = {
+  a: { status: 'sent', timing: { researchMs: 60000 }, lookups: 10, contact: { firstName: 'A' }, email: { originalBody: 'x', body: 'x' } },
+  b: { status: 'drafted', timing: { researchMs: 180000 }, lookups: 20, contact: { firstName: 'B' }, rewrites: 2, email: { body: 'y' } },
+  c: { status: 'no_contact', timing: { researchMs: 30000 }, lookups: 6 },
+  d: { status: 'rejected', timing: { researchMs: 30000 }, lookups: 4 },
+  e: { status: 'manual_review' },
+};
+
+test('the metrics answer the questions the brief asks', () => {
+  const m = metrics(measured);
+  assert.equal(m.researched, 4, 'the handed-back company was never timed');
+  assert.equal(m.averageMs, 75000);
+  assert.equal(m.withinTarget, true, 'under the two minutes the brief asks for');
+  assert.equal(m.lookupsPerCompany, 10);
+  assert.equal(m.drafted, 2);
+  assert.equal(m.rewritten, 1, 'only the one that was rewritten counts');
+  assert.equal(m.rewriteRate, 0.5);
+  assert.equal(m.contactsFound, 2);
+  assert.equal(m.contactRate, 2 / 3, 'out of the three we actually looked for');
+  assert.equal(m.sent, 1);
+  assert.equal(m.handedBack, 1);
+});
+
+test('an edited draft counts as a rewrite even without pressing Rewrite', () => {
+  const edited = metrics({ a: { status: 'sent', email: { body: 'changed', originalBody: 'original', edited: true } } });
+  assert.equal(edited.rewritten, 1);
+  assert.equal(edited.rewriteRate, 1);
+});
+
+test('metrics on nothing are blank rather than zero or NaN', () => {
+  const m = metrics({});
+  assert.equal(m.averageMs, null);
+  assert.equal(m.withinTarget, null);
+  assert.equal(m.rewriteRate, null);
+  assert.equal(m.contactRate, null);
+  assert.equal(m.researched, 0);
+});
+
+test('a company over the two-minute target is reported as over', () => {
+  assert.equal(metrics({ a: { status: 'sent', timing: { researchMs: 200000 } } }).withinTarget, false);
+});
+
+test('durations read as a person would say them', () => {
+  assert.equal(formatDuration(45000), '45s');
+  assert.equal(formatDuration(80000), '1m 20s');
+  assert.equal(formatDuration(600000), '10m 00s');
+  assert.equal(formatDuration(0), '0s');
+  assert.equal(formatDuration(null), '—');
+  assert.equal(formatDuration(-5), '—');
+});
+
+test('percentages, including the ones we cannot compute', () => {
+  assert.equal(asPercent(0.5), '50%');
+  assert.equal(asPercent(0), '0%');
+  assert.equal(asPercent(1), '100%');
+  assert.equal(asPercent(null), '—');
+  assert.equal(asPercent(undefined), '—');
+});
+
+test('a handed-back company gets its own tab and sits on the rail where it stopped', () => {
+  assert.deepEqual(companiesIn({ x: { domain: 'x', status: 'manual_review' } }, 'handoff').map((c) => c.domain), ['x']);
+  assert.equal(pipelineStageOf({ status: 'manual_review' }), 'qualify');
+
+  // And it must not quietly vanish from every tab.
+  const stages = STAGES.filter((s) => s.has({ status: 'manual_review' }));
+  assert.equal(stages.length, 1);
 });

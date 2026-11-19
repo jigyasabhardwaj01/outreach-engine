@@ -3,7 +3,12 @@
 import { nextQuestion, verdictOf } from './assess.js';
 import { citationFor, quoteIsInSource, LlmUnusable } from './llm.js';
 import { SourceSet, describeSource } from './sources.js';
-import { fetchPage as realFetchPage, resolveRedirect as realResolveRedirect } from './web.js';
+import { createPoliteFetcher, resolveRedirect as realResolveRedirect } from './web.js';
+import { RobotsCache } from './robots.js';
+
+// Every real fetch goes out politely: robots.txt first, then one request per
+// host per second. Tests inject their own fetchPage and bypass both.
+const politeFetch = createPoliteFetcher({ robots: new RobotsCache({ agent: 'outreach-engine' }) });
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -36,7 +41,7 @@ function schemaFor(q) {
 }
 
 export class Researcher {
-  constructor({ profile, llm, store, fetchPage = realFetchPage, resolveRedirect = realResolveRedirect, budget = 40 }) {
+  constructor({ profile, llm, store, fetchPage = politeFetch, resolveRedirect = realResolveRedirect, budget = 40 }) {
     Object.assign(this, { profile, llm, store, fetchPage, resolveRedirect, budget });
   }
 
@@ -164,9 +169,10 @@ export class Researcher {
    * enough to be cut off, and so an interrupted company resumes where it
    * stopped instead of starting over.
    */
-  async step(company, { onProgress = () => {}, sources } = {}) {
+  async step(company, { onProgress = () => {}, sources, now = () => Date.now() } = {}) {
+    const startedAt = now();
     const { progress, ...rest } = company;
-    const { answers = {}, details = {}, lookups = 0 } = progress ?? {};
+    const { answers = {}, details = {}, lookups = 0, msSpent = 0 } = progress ?? {};
     const set = sources ?? new SourceSet({ company, llm: this.llm, fetchPage: this.fetchPage, budget: this.budget, used: lookups });
 
     const question = nextQuestion(this.profile, answers);
@@ -177,9 +183,29 @@ export class Researcher {
       answers[question.key] = detail.answer;
     }
 
-    if (nextQuestion(this.profile, answers)) {
-      return this.store.put({ ...rest, status: 'researching', progress: { answers, details, lookups: set.used } });
+    const spent = msSpent + (now() - startedAt);
+    const remaining = nextQuestion(this.profile, answers);
+
+    // The cap is a handoff, not a failure. Recording everything left as
+    // "unknown" would turn a budget decision into a verdict about the company,
+    // which is a lie the review page would have no way to see through.
+    if (remaining && set.exhausted) {
+      return this.store.put({
+        ...rest,
+        status: 'manual_review',
+        progress: { answers, details, lookups: set.used, msSpent: spent },
+        handoff: {
+          reason: `Ran out of lookups (${set.used}) with "${remaining.label}" still unanswered.`,
+          unanswered: this.profile.qualifiers.filter((q) => answers[q.key] === undefined).map((q) => q.label),
+          at: new Date().toISOString(),
+        },
+      });
     }
+
+    if (remaining) {
+      return this.store.put({ ...rest, status: 'researching', progress: { answers, details, lookups: set.used, msSpent: spent } });
+    }
+
     return this.store.put({
       ...rest,
       status: 'researched',
@@ -188,6 +214,7 @@ export class Researcher {
       details,
       verdict: verdictOf(this.profile, answers),
       lookups: set.used,
+      timing: { researchMs: spent },
     });
   }
 

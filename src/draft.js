@@ -188,6 +188,6 @@ export async function draftEmail(company, { profile, llm, store, feedback = null
   return store.put({
     ...company,
     status: 'drafted',
-    email: { ...draft, body, issues, status: 'draft', draftedAt: new Date().toISOString() },
+    email: { ...draft, body, originalBody: body, issues, status: 'draft', draftedAt: new Date().toISOString() },
   });
 }

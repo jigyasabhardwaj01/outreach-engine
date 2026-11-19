@@ -3,6 +3,8 @@
 // node cli.js discover 10         Fill the shortlist from the profile's searches
 // node cli.js add acme.com b.io   Shortlist companies you already know
 // node cli.js research            Research everything shortlisted
+// node cli.js run acme.com b.io  Run all seven steps over a list of domains
+// node cli.js verify             Prove the pipeline works, without spending anything
 // node cli.js doctor              Check the settings and the API keys
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -12,6 +14,9 @@ import { Gemini } from './src/llm.js';
 import { createActions } from './src/actions.js';
 import { Researcher } from './src/research.js';
 import { startServer } from './src/server.js';
+import { runPipeline, describeRun } from './src/pipeline.js';
+import { selfCheck } from './src/selfcheck.js';
+import { mailerFor } from './src/mailer.js';
 
 const say = (message) => console.log(message);
 
@@ -65,6 +70,31 @@ const commands = {
     }
   },
 
+  async run(domains) {
+    const ctx = await context();
+    const autoSend = String(env.REVIEW_MODE ?? 'true').toLowerCase() === 'false';
+    say(autoSend ? `Sending is ON. Approved drafts go to ${env.EMAIL_TO}.` : 'REVIEW_MODE is on: drafts stop for your approval. Set REVIEW_MODE=false to send.');
+
+    const summary = await runPipeline({ ...ctx, domains, onProgress: say });
+    say(`\n${describeRun(summary)}`);
+    for (const failure of summary.failures) say(`  ${failure.domain} (${failure.step}): ${failure.reason}`);
+  },
+
+  async verify() {
+    const profile = await loadProfile();
+    const { steps, ok, configured } = await selfCheck({ profile, settings: env });
+    const line = (step) => say(`${step.ok ? '\u2713' : '\u2717'} ${String(step.step).padEnd(2)} ${step.name.padEnd(46)} ${step.detail}`);
+
+    say('The pipeline, run end to end against a stand-in web and model:');
+    steps.filter((s) => s.kind === 'pipeline').forEach(line);
+    say('\nConfiguration on this machine:');
+    steps.filter((s) => s.kind === 'config').forEach(line);
+
+    say(ok ? '\nThe pipeline works end to end.' : '\nThe pipeline is broken above.');
+    if (ok && !configured) say('It cannot do it for real until the missing settings are filled in.');
+    if (!ok) process.exitCode = 1;
+  },
+
   async doctor() {
     const profile = await loadProfile();
     say(`Profile loaded: ${profile.qualifiers.length} qualifiers, ${profile.discovery.length} discovery searches.`);
@@ -79,6 +109,9 @@ const commands = {
       const shown = name.endsWith('_KEY') ? `set, ${value?.length ?? 0} characters` : value;
       say(`${name.padEnd(16)} ${value ? shown : `MISSING — ${hint} will not work`}`);
     }
+
+    const mailer = mailerFor(env);
+    say(`Mailer           ${mailer.name}${mailer.ready ? ' — ready' : ` — MISSING ${mailer.missing.join(', ')}`}`);
 
     const store = createStore(env);
     say(`Companies stored: ${Object.keys(await store.all()).length}`);

@@ -13,6 +13,13 @@ export const STAGES = [
     has: (c) => c.status === 'researched' && !c.decision,
   },
   {
+    id: 'handoff',
+    name: 'Needs you',
+    blurb: 'The system stopped and handed these back rather than guessing.',
+    empty: 'Nothing has been handed back.',
+    has: (c) => c.status === 'manual_review',
+  },
+  {
     id: 'emails',
     name: 'Emails',
     blurb: 'Drafts to approve, edit or reject.',
@@ -56,6 +63,7 @@ const PIPELINE_BY_STATUS = {
   shortlisted: 'shortlist',
   researching: 'research',
   researched: 'qualify',
+  manual_review: 'qualify',
   approved: 'contact',
   contact_found: 'contact',
   no_contact: 'contact',
@@ -100,6 +108,52 @@ export function bannerFor(companies) {
   if (all.length) return { title: 'Nothing waiting for you', detail };
   return { title: 'Nothing here yet', detail: 'Find some companies to get started.' };
 }
+
+/**
+ * The measurement plan, computed from what actually happened.
+ *
+ * These are the numbers that say whether the system is worth running: how long
+ * a company takes, how often its drafts get rewritten, how often it finds a
+ * contact at all. A tool that cannot be measured cannot be killed, and one
+ * that cannot be killed will outlive its usefulness.
+ */
+export function metrics(companies) {
+  const all = Object.values(companies ?? {});
+  const timed = all.filter((c) => Number.isFinite(c.timing?.researchMs) && c.timing.researchMs > 0);
+  const drafted = all.filter((c) => c.email);
+  const rewritten = drafted.filter((c) => (c.rewrites ?? 0) > 0 || c.email?.edited);
+  const looked = all.filter((c) => ['contact_found', 'no_contact', 'drafted', 'email_rejected', 'sent'].includes(c.status));
+  const found = looked.filter((c) => c.contact);
+
+  const totalMs = timed.reduce((sum, c) => sum + c.timing.researchMs, 0);
+  const averageMs = timed.length ? Math.round(totalMs / timed.length) : null;
+
+  return {
+    researched: timed.length,
+    averageMs,
+    // The brief's target: under two minutes a company, against 15-20 by hand.
+    withinTarget: averageMs === null ? null : averageMs <= 120000,
+    lookupsPerCompany: timed.length ? Number((timed.reduce((sum, c) => sum + (c.lookups ?? 0), 0) / timed.length).toFixed(1)) : null,
+    drafted: drafted.length,
+    rewritten: rewritten.length,
+    rewriteRate: drafted.length ? rewritten.length / drafted.length : null,
+    contactsLookedFor: looked.length,
+    contactsFound: found.length,
+    contactRate: looked.length ? found.length / looked.length : null,
+    sent: all.filter((c) => c.status === 'sent').length,
+    handedBack: all.filter((c) => c.status === 'manual_review').length,
+  };
+}
+
+/** "1m 20s", "48s" — a duration a person can read at a glance. */
+export function formatDuration(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+}
+
+export const asPercent = (rate) => (rate === null || rate === undefined ? '—' : `${Math.round(rate * 100)}%`);
 
 /** "20 waiting for research: a.com, b.com and 18 more" */
 export function researchQueueLine(companies, limit = 8) {

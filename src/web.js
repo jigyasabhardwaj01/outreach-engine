@@ -135,6 +135,34 @@ export async function fetchPage(url, { attempts = 3, timeoutMs = 20000, maxChars
   return { status: 'failed', url, reason };
 }
 
+/**
+ * fetchPage, wrapped in the two courtesies a scraper owes a site it does not
+ * own: ask robots.txt first, and do not hammer one host.
+ *
+ * A disallowed page comes back as 'failed', not 'missing', because we did not
+ * look — and absence of evidence must never be read from a page we never read.
+ */
+export function createPoliteFetcher({ robots, minGapMs = 1000, fetchPage: inner = fetchPage, sleepImpl = sleep } = {}) {
+  const lastByHost = new Map();
+
+  return async function politeFetch(url, options) {
+    if (!isPublicUrl(url)) return { status: 'failed', url, reason: 'not a public web address' };
+
+    if (robots) {
+      const verdict = await robots.check(url);
+      if (!verdict.allowed) return { status: 'failed', url, reason: `robots.txt disallows it (${verdict.rule})` };
+      if (verdict.crawlDelay) minGapMs = Math.max(minGapMs, verdict.crawlDelay * 1000);
+    }
+
+    const { host } = new URL(url);
+    const wait = (lastByHost.get(host) ?? 0) + minGapMs - Date.now();
+    if (wait > 0) await sleepImpl(wait);
+    lastByHost.set(host, Date.now());
+
+    return inner(url, options);
+  };
+}
+
 // Search results link through a redirect; follow one hop to the real address.
 export async function resolveRedirect(url) {
   try {

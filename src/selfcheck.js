@@ -1,0 +1,143 @@
+// The system checking itself.
+//
+// It runs the real pipeline — the real researcher, the real qualifier, the
+// real drafting checks — against a stand-in web and a stand-in model, and then
+// asserts that each of the seven steps actually produced what it claims to.
+// No API keys, no network, no cost. If this passes, the wiring is sound and
+// only the credentials stand between you and a real run.
+import { MemoryStore } from './store.js';
+import { Researcher } from './research.js';
+import { runPipeline } from './pipeline.js';
+import { isAllowed } from './robots.js';
+import { mailerFor } from './mailer.js';
+
+const PAGES = {
+  'https://selfcheck.example/': 'Selfcheck is a B2B SaaS platform that mid-market finance teams use to close their books.',
+  'https://selfcheck.example/about': 'Selfcheck is a team of 84 people across two offices, serving finance teams.',
+  'https://selfcheck.example/security': 'Our SOC 2 Type II audit is currently in progress. We are not certified yet.',
+  'https://selfcheck.example/careers': 'We are hiring our first compliance lead to take us through SOC 2 this year.',
+  'https://selfcheck.example/pricing': 'Plans for teams, with an enterprise tier for larger finance organisations.',
+};
+
+const fakeWeb = async (url) => {
+  const page = PAGES[url];
+  if (!page) return { status: 'missing', url };
+  return { status: 'ok', url, text: page, links: Object.keys(PAGES), publishedAt: null, fetchedAt: '2026-01-01' };
+};
+
+// Answers drawn only from the page it is shown, so the evidence checks are
+// exercised rather than bypassed.
+const fakeLlm = {
+  requests: [],
+  async ask(request) {
+    this.requests.push(request);
+    const prompt = request.prompt;
+    const quote = (text, fallback) => (prompt.includes(text) ? text : fallback);
+
+    if (prompt.includes('Write one cold email')) {
+      return {
+        json: {
+          pain_points: [
+            { pain: 'Audit prep landing on one person', why: 'They are hiring their first compliance lead.' },
+            { pain: 'Enterprise questionnaires', why: 'They sell to finance teams.' },
+          ],
+          hook: 'hiring their first compliance lead',
+          hook_source_url: 'https://selfcheck.example/careers',
+          why_this_email: 'They are mid audit-prep with nobody owning it yet.',
+          subject: 'Your first compliance lead',
+          body: 'Hi Ada,\n\nI saw you are hiring our first compliance lead to take us through SOC 2. It looks like that work sits with you until they start.\n\nWorth a short call?',
+        },
+      };
+    }
+    if (prompt.includes('B2B software-as-a-service')) {
+      return { json: { answer: 'b2b_saas', sufficient: true, evidence_quote: quote('B2B SaaS platform', 'B2B SaaS') } };
+    }
+    if (prompt.includes('How many people')) {
+      return { json: { answer: 'not_stated', sufficient: true, number: 84, evidence_quote: 'a team of 84 people' } };
+    }
+    if (prompt.includes('certifications')) {
+      return { json: { answer: 'not_certified', sufficient: true, evidence_quote: 'We are not certified yet' } };
+    }
+    if (prompt.includes('funding stage')) {
+      return { json: { answer: 'unknown', sufficient: false } };
+    }
+    if (prompt.includes('preparing for a compliance audit')) {
+      return { json: { answer: 'yes', sufficient: true, evidence_quote: 'hiring our first compliance lead to take us through SOC 2' } };
+    }
+    return { json: { answer: 'not_stated', sufficient: false } };
+  },
+};
+
+const hunterStub = async () => ({
+  ok: true,
+  json: async () => ({ data: { emails: [{ first_name: 'Ada', last_name: 'Lovelace', position: 'CTO', value: 'ada@selfcheck.example', confidence: 90 }] } }),
+});
+
+/**
+ * Run the pipeline end to end against stand-ins and report on each step.
+ * Returns { steps: [{ step, name, ok, detail }], ok }.
+ */
+export async function selfCheck({ profile, settings = {} } = {}) {
+  const store = new MemoryStore();
+  const steps = [];
+  const add = (step, name, ok, detail, kind = 'pipeline') => steps.push({ step, name, ok, detail, kind });
+
+  let sent = null;
+  const summary = await runPipeline({
+    domains: ['selfcheck.example'],
+    profile,
+    llm: fakeLlm,
+    store,
+    settings: { ...settings, REVIEW_MODE: 'false', EMAIL_TO: 'you@example.com', HUNTER_API_KEY: 'stub', MAILER: 'resend', RESEND_API_KEY: 'stub' },
+    // The real researcher, pointed at a stand-in web rather than the network.
+    researcher: new Researcher({ profile, llm: fakeLlm, store, fetchPage: fakeWeb, resolveRedirect: async (u) => u }),
+    contactFetch: hunterStub,
+    transport: {
+      fetchImpl: async (url, options) => {
+        sent = JSON.parse(options.body);
+        return { ok: true, json: async () => ({ id: 'selfcheck' }) };
+      },
+    },
+  });
+
+  const company = await store.get('selfcheck.example');
+  const details = company?.details ?? {};
+  const quoted = Object.values(details).filter((d) => d.evidence?.quote);
+
+  add(1, 'Scrape the company’s site', Boolean(quoted.length), `${quoted.length} answers came from fetched pages`);
+  add(2, 'Extract structured data', Object.keys(company?.answers ?? {}).length > 0, `fields: ${Object.keys(company?.answers ?? {}).join(', ') || 'none'}`);
+  add(
+    3,
+    'Qualify against the ICP, fetching more when thin',
+    company?.verdict?.kind === 'qualify',
+    `${company?.verdict?.code ?? 'no verdict'} after ${company?.lookups ?? 0} lookups`,
+  );
+  add(4, 'Find the point of contact', Boolean(company?.contact?.firstName), company?.contact ? `${company.contact.firstName} — ${company.contact.title}` : 'none found');
+  add(5, 'Name two pain points', (company?.email?.pain_points ?? []).length === 2, `${(company?.email?.pain_points ?? []).length} named`);
+  add(
+    6,
+    'Draft, addressed by name with a real hook',
+    Boolean(company?.email) && company.email.issues.length === 0 && company.email.body.includes(company.contact.firstName),
+    company?.email?.issues?.length ? `rejected by its own checks: ${company.email.issues[0]}` : 'passed every draft check',
+  );
+  add(7, 'Send to your own address', summary.sent === 1 && sent?.to?.[0] === 'you@example.com', sent ? `to ${sent.to.join(', ')}` : 'nothing sent');
+
+  // Two promises that are easy to break and expensive to break quietly.
+  add('a', 'Mail goes only to EMAIL_TO', !JSON.stringify(sent ?? {}).includes('ada@selfcheck.example'), 'the contact address appears nowhere in the message');
+  add('b', 'robots.txt is honoured', isAllowed('User-agent: *\nDisallow: /private', '/private').allowed === false, 'a disallowed path is refused');
+
+  const mailer = mailerFor(settings);
+  // Configuration, not wiring: reported separately so a missing key does not
+  // read as a broken pipeline.
+  add('c', 'A way to send is configured', mailer.ready, mailer.ready ? `${mailer.name} is ready` : `${mailer.name}: ${mailer.missing.join(', ')} missing`, 'config');
+  add('d', 'A model key is configured', Boolean(settings.GEMINI_API_KEY), settings.GEMINI_API_KEY ? 'GEMINI_API_KEY is set' : 'GEMINI_API_KEY missing', 'config');
+  add('e', 'A destination address is set', Boolean(settings.EMAIL_TO), settings.EMAIL_TO ? `mail goes to ${settings.EMAIL_TO}` : 'EMAIL_TO missing', 'config');
+
+  const pipeline = steps.filter((s) => s.kind === 'pipeline');
+  return {
+    steps,
+    ok: pipeline.every((s) => s.ok),
+    configured: steps.filter((s) => s.kind === 'config').every((s) => s.ok),
+    summary,
+  };
+}

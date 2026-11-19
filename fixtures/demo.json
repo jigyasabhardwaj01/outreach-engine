@@ -108,7 +108,10 @@
         "Funding stage is unknown."
       ]
     },
-    "lookups": 11
+    "lookups": 11,
+    "timing": {
+      "researchMs": 74000
+    }
   },
   "harbourly.com": {
     "domain": "harbourly.com",
@@ -154,9 +157,15 @@
       "issues": [
         "The hook comes from something too old, or undated, to present as current."
       ],
-      "status": "draft"
+      "status": "draft",
+      "originalBody": "Hi Priya,\n\nI saw Harbourly launched an enterprise tier last month. It looks like security questionnaires land on your desk now.\n\nWorth a short call?\n\nSprinto"
     },
-    "updatedAt": "2026-11-17T10:35:33.128Z"
+    "updatedAt": "2026-11-17T10:35:33.128Z",
+    "timing": {
+      "researchMs": 96000
+    },
+    "lookups": 14,
+    "rewrites": 1
   },
   "pixelpals.app": {
     "domain": "pixelpals.app",
@@ -170,6 +179,54 @@
       "code": "not_saas",
       "reason": "Not a B2B SaaS company.",
       "notes": []
+    },
+    "timing": {
+      "researchMs": 38000
+    },
+    "lookups": 5
+  },
+  "tideline.dev": {
+    "domain": "tideline.dev",
+    "name": "Tideline",
+    "foundBy": "Recent Series A funding",
+    "status": "manual_review",
+    "progress": {
+      "answers": {
+        "saas": "b2b_saas"
+      },
+      "details": {
+        "saas": {
+          "label": "B2B SaaS",
+          "answer": "b2b_saas",
+          "value": null,
+          "evidence": {
+            "kind": "page",
+            "url": "https://tideline.dev/",
+            "sourceDate": null,
+            "quote": "the deployment platform for data teams",
+            "checkedAt": "2026-11-18"
+          },
+          "log": [
+            {
+              "source": "https://tideline.dev/",
+              "outcome": "answered"
+            }
+          ]
+        }
+      },
+      "lookups": 40,
+      "msSpent": 141000
+    },
+    "handoff": {
+      "reason": "Ran out of lookups (40) with \"Employee count\" still unanswered.",
+      "unanswered": [
+        "Employee count",
+        "Certifications held",
+        "Funding stage",
+        "Preparing for an audit",
+        "Enterprise clients"
+      ],
+      "at": "2026-11-18T09:12:00.000Z"
     }
   }
 }

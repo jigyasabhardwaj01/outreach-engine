@@ -47,7 +47,7 @@ export function createActions({ profile, llm, store, settings, researcher = new 
 
     /** Look again at a company you have already researched. */
     researchAgain: async ({ domain }) => {
-      const { progress, answers, details, verdict, ...rest } = await load(domain);
+      const { progress, answers, details, verdict, handoff, timing, ...rest } = await load(domain);
       return store.put({ ...rest, status: 'researching' });
     },
 
@@ -75,7 +75,10 @@ export function createActions({ profile, llm, store, settings, researcher = new 
     },
 
     /** Write it again, with your notes on what was wrong. */
-    redraft: async ({ domain, feedback = null }) => draftEmail(await load(domain), { profile, llm, store, feedback }),
+    redraft: async ({ domain, feedback = null }) => {
+      const company = await load(domain);
+      return draftEmail({ ...company, rewrites: (company.rewrites ?? 0) + 1 }, { profile, llm, store, feedback });
+    },
 
     rejectEmail: async ({ domain }) => {
       const company = await load(domain);
