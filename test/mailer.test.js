@@ -163,3 +163,29 @@ test('the queue id is the id, not the timestamp sitting next to it', () => {
   assert.equal(queueId('250 2.0.0 OK'), null, 'some servers give no id at all');
   assert.equal(queueId(''), null);
 });
+
+test('a login check signs in and hangs up without sending anything', async () => {
+  const { openSession } = await import('../src/mailer.js');
+  let socket;
+  const result = await openSession({
+    host: 'smtp.gmail.com', user: 'me@gmail.com', pass: 'p',
+    connectImpl: async () => (socket = fakeServer(HAPPY)),
+  });
+
+  const commands = socket.sent.map((line) => line.split('\r\n')[0]);
+  assert.ok(commands.includes('AUTH LOGIN'), 'it does authenticate');
+  assert.ok(!commands.some((c) => c.startsWith('MAIL FROM')), 'but never opens an envelope');
+  assert.ok(!commands.includes('DATA'), 'and never sends a message');
+  assert.equal(result.response, 'signed in');
+});
+
+test('a login check reports a bad password rather than pretending to be fine', async () => {
+  const { openSession } = await import('../src/mailer.js');
+  const replies = [...HAPPY];
+  replies[4] = '535 5.7.8 Username and Password not accepted\r\n';
+
+  await assert.rejects(
+    () => openSession({ host: 'x', user: 'u', pass: 'wrong', connectImpl: async () => fakeServer(replies) }),
+    /App Password/,
+  );
+});

@@ -5,6 +5,7 @@
 // node cli.js research            Research everything shortlisted
 // node cli.js run acme.com b.io  Run all seven steps over a list of domains
 // node cli.js verify             Prove the pipeline works, without spending anything
+// node cli.js verify --live      Check the real keys answer: model, Hunter, mailer
 // node cli.js doctor              Check the settings and the API keys
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,7 +16,7 @@ import { createActions } from './src/actions.js';
 import { Researcher } from './src/research.js';
 import { startServer } from './src/server.js';
 import { runPipeline, describeRun } from './src/pipeline.js';
-import { selfCheck } from './src/selfcheck.js';
+import { selfCheck, liveCheck } from './src/selfcheck.js';
 import { mailerFor } from './src/mailer.js';
 
 const say = (message) => console.log(message);
@@ -80,7 +81,16 @@ const commands = {
     for (const failure of summary.failures) say(`  ${failure.domain} (${failure.step}): ${failure.reason}`);
   },
 
-  async verify() {
+  async verify(args) {
+    if (args.includes('--live')) {
+      say('Checking the real services with the credentials configured here:');
+      const { steps, ok } = await liveCheck({ settings: env });
+      for (const step of steps) say(`${step.ok ? '\u2713' : '\u2717'} ${step.name.padEnd(22)} ${step.detail}`);
+      say(ok ? '\nEverything answers. It can run for real.' : '\nFix the crosses above before running it for real.');
+      if (!ok) process.exitCode = 1;
+      return;
+    }
+
     const profile = await loadProfile();
     const { steps, ok, configured } = await selfCheck({ profile, settings: env });
     const line = (step) => say(`${step.ok ? '\u2713' : '\u2717'} ${String(step.step).padEnd(2)} ${step.name.padEnd(46)} ${step.detail}`);

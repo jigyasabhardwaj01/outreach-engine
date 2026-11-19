@@ -231,3 +231,74 @@ test('the self-check reports configuration separately from wiring', async () => 
   assert.equal(ok, true, 'the pipeline still works with no keys at all');
   assert.equal(configured, false, 'but it is not ready to do it for real');
 });
+
+// ---------------------------------------------------------------- live credential checks
+
+const liveStub = (routes) => async (url) => {
+  const hit = Object.entries(routes).find(([fragment]) => String(url).includes(fragment));
+  if (!hit) throw Object.assign(new Error('unexpected call'), { name: 'TypeError' });
+  const [, value] = hit;
+  if (value instanceof Error) throw value;
+  return { ok: value.ok ?? true, status: value.status ?? 200, json: async () => value.body ?? {} };
+};
+
+const GEMINI_OK = { body: { models: [{ name: 'models/gemini-3.8-flash', supportedGenerationMethods: ['generateContent'] }] } };
+const HUNTER_OK = { body: { data: { requests: { searches: { used: 3, available: 25 } } } } };
+
+test('live check passes when every service answers', async () => {
+  const { liveCheck } = await import('../src/selfcheck.js');
+  const { steps, ok } = await liveCheck({
+    settings: { GEMINI_API_KEY: 'g', GEMINI_MODEL: 'gemini-3.8-flash', HUNTER_API_KEY: 'h', MAILER: 'resend', RESEND_API_KEY: 'r', EMAIL_TO: 'me@mine.com' },
+    fetchImpl: liveStub({ 'generativelanguage': GEMINI_OK, 'hunter.io': HUNTER_OK, 'resend.com': { ok: true } }),
+  });
+
+  assert.equal(ok, true, steps.filter((s) => !s.ok).map((s) => s.detail).join('; '));
+  assert.match(steps.find((s) => s.name === 'Hunter key').detail, /3\/25 searches used/);
+});
+
+test('a key that is present but rejected is reported as rejected, not missing', async () => {
+  const { liveCheck } = await import('../src/selfcheck.js');
+  const { steps, ok } = await liveCheck({
+    settings: { GEMINI_API_KEY: 'stale', GEMINI_MODEL: 'gemini-3.8-flash', HUNTER_API_KEY: 'h', MAILER: 'resend', RESEND_API_KEY: 'r', EMAIL_TO: 'me@mine.com' },
+    fetchImpl: liveStub({
+      'generativelanguage': { ok: false, status: 400, body: { error: { message: 'API key not valid' } } },
+      'hunter.io': HUNTER_OK,
+      'resend.com': { ok: true },
+    }),
+  });
+
+  assert.equal(ok, false);
+  assert.match(steps.find((s) => s.name === 'Gemini key').detail, /HTTP 400: API key not valid/);
+});
+
+test('a model the key cannot use is named, with ones it can', async () => {
+  const { liveCheck } = await import('../src/selfcheck.js');
+  const { steps } = await liveCheck({
+    settings: { GEMINI_API_KEY: 'g', GEMINI_MODEL: 'gemini-9-imaginary', HUNTER_API_KEY: 'h', MAILER: 'resend', RESEND_API_KEY: 'r', EMAIL_TO: 'me@mine.com' },
+    fetchImpl: liveStub({ 'generativelanguage': GEMINI_OK, 'hunter.io': HUNTER_OK, 'resend.com': { ok: true } }),
+  });
+
+  const model = steps.find((s) => s.name.startsWith('Model'));
+  assert.equal(model.ok, false);
+  assert.match(model.detail, /NOT available. Try: gemini-3\.8-flash/);
+});
+
+test('a service that is down is distinguished from a key that is wrong', async () => {
+  const { liveCheck } = await import('../src/selfcheck.js');
+  const { steps } = await liveCheck({
+    settings: { GEMINI_API_KEY: 'g', HUNTER_API_KEY: 'h', MAILER: 'resend', RESEND_API_KEY: 'r', EMAIL_TO: 'me@mine.com' },
+    fetchImpl: liveStub({ 'generativelanguage': Object.assign(new Error('timed out'), { name: 'TimeoutError' }), 'hunter.io': HUNTER_OK, 'resend.com': { ok: true } }),
+  });
+  assert.match(steps.find((s) => s.name === 'Gemini key').detail, /unreachable: TimeoutError/);
+});
+
+test('live check never claims a Gmail mailer works when no password is set', async () => {
+  const { liveCheck } = await import('../src/selfcheck.js');
+  const { steps } = await liveCheck({
+    settings: { GEMINI_API_KEY: 'g', HUNTER_API_KEY: 'h', MAILER: 'gmail', GMAIL_USER: 'me@gmail.com', EMAIL_TO: 'me@mine.com' },
+    fetchImpl: liveStub({ 'generativelanguage': GEMINI_OK, 'hunter.io': HUNTER_OK }),
+  });
+  const mailer = steps.find((s) => s.name.startsWith('Mailer'));
+  assert.equal(mailer.ok, false);
+  assert.match(mailer.detail, /GMAIL_APP_PASSWORD not set/);
+});

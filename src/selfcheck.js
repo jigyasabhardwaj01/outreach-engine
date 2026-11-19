@@ -141,3 +141,90 @@ export async function selfCheck({ profile, settings = {} } = {}) {
     summary,
   };
 }
+
+/**
+ * The same seven steps, but against the real services, using whatever
+ * credentials are configured. One cheap call each: list models, read the
+ * Hunter account, count rows, open an SMTP session without sending.
+ *
+ * This is what to run the moment a key is added — a key that is present but
+ * wrong looks exactly like a key that is absent until something tries it.
+ */
+export async function liveCheck({ settings = {}, fetchImpl = fetch, connectImpl } = {}) {
+  const steps = [];
+  const add = (name, ok, detail) => steps.push({ name, ok, detail });
+
+  // The model
+  if (!settings.GEMINI_API_KEY) add('Gemini key', false, 'GEMINI_API_KEY is not set');
+  else {
+    try {
+      const res = await fetchImpl('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', {
+        headers: { 'x-goog-api-key': settings.GEMINI_API_KEY },
+        signal: AbortSignal.timeout(15000),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) add('Gemini key', false, `HTTP ${res.status}: ${body.error?.message ?? 'rejected'}`);
+      else {
+        const usable = (body.models ?? []).filter((m) => (m.supportedGenerationMethods ?? []).includes('generateContent'));
+        const wanted = settings.GEMINI_MODEL;
+        const has = usable.some((m) => m.name.endsWith(wanted));
+        add('Gemini key', true, `${usable.length} models available`);
+        add(`Model ${wanted}`, has, has ? 'available to this key' : `NOT available. Try: ${usable.slice(0, 3).map((m) => m.name.replace('models/', '')).join(', ')}`);
+      }
+    } catch (error) {
+      add('Gemini key', false, `unreachable: ${error.name}`);
+    }
+  }
+
+  // The contact finder
+  if (!settings.HUNTER_API_KEY) add('Hunter key', false, 'HUNTER_API_KEY is not set');
+  else {
+    try {
+      const res = await fetchImpl(`https://api.hunter.io/v2/account?api_key=${encodeURIComponent(settings.HUNTER_API_KEY)}`, {
+        signal: AbortSignal.timeout(15000),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) add('Hunter key', false, `HTTP ${res.status}: ${body.errors?.[0]?.details ?? 'rejected'}`);
+      else {
+        const searches = body.data?.requests?.searches;
+        add('Hunter key', true, searches ? `${searches.used}/${searches.available} searches used this month` : 'accepted');
+      }
+    } catch (error) {
+      add('Hunter key', false, `unreachable: ${error.name}`);
+    }
+  }
+
+  // The way out
+  const mailer = mailerFor(settings);
+  if (!mailer.ready) add(`Mailer (${mailer.name})`, false, `${mailer.missing.join(', ')} not set`);
+  else if (mailer.name === 'gmail') {
+    try {
+      // Log in and hang up: proves the App Password works, sends nothing.
+      const { openSession } = await import('./mailer.js');
+      await openSession({
+        host: settings.SMTP_HOST || 'smtp.gmail.com',
+        port: Number(settings.SMTP_PORT) || 465,
+        user: settings.GMAIL_USER,
+        pass: settings.GMAIL_APP_PASSWORD,
+        connectImpl,
+      });
+      add('Mailer (gmail)', true, `signed in as ${settings.GMAIL_USER}, nothing sent`);
+    } catch (error) {
+      add('Mailer (gmail)', false, error.message);
+    }
+  } else {
+    try {
+      const res = await fetchImpl('https://api.resend.com/domains', {
+        headers: { Authorization: `Bearer ${settings.RESEND_API_KEY}` },
+        signal: AbortSignal.timeout(15000),
+      });
+      add('Mailer (resend)', res.ok, res.ok ? 'key accepted' : `HTTP ${res.status}`);
+    } catch (error) {
+      add('Mailer (resend)', false, `unreachable: ${error.name}`);
+    }
+  }
+
+  add('Destination', Boolean(settings.EMAIL_TO), settings.EMAIL_TO ? `mail would go to ${settings.EMAIL_TO}` : 'EMAIL_TO is not set');
+
+  return { steps, ok: steps.every((s) => s.ok) };
+}

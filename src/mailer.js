@@ -52,13 +52,18 @@ const connect = (host, port) =>
     socket.once('error', reject);
   });
 
+/** Log in and hang up. Proves the credentials work without sending anything. */
+export async function openSession({ host, port = 465, user, pass, connectImpl = connect, timeoutMs = 20000 }) {
+  return sendSmtp({ host, port, user, pass, connectImpl, timeoutMs, loginOnly: true });
+}
+
 /**
  * Enough SMTP to post one message: greeting, EHLO, login, envelope, data.
  *
  * `connectImpl` is injected so the conversation can be tested against a fake
  * socket. Everything is driven off the reply codes rather than timing.
  */
-export async function sendSmtp({ host, port = 465, user, pass, from, fromName, to, subject, body, connectImpl = connect, timeoutMs = 20000 }) {
+export async function sendSmtp({ host, port = 465, user, pass, from, fromName, to, subject, body, connectImpl = connect, timeoutMs = 20000, loginOnly = false }) {
   const socket = await connectImpl(host, port);
   let buffer = '';
   let waiting = null;
@@ -118,6 +123,11 @@ export async function sendSmtp({ host, port = 465, user, pass, from, fromName, t
           ? 'Gmail rejected the username or app password. A normal account password will not work: create an App Password.'
           : `SMTP ${authed.code}: ${authed.text}`,
       );
+    }
+
+    if (loginOnly) {
+      await say('QUIT', [221]).catch(() => {});
+      return { id: null, response: 'signed in' };
     }
 
     await say(`MAIL FROM:<${from}>`, [250]);
