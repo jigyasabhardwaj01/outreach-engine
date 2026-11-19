@@ -27,7 +27,10 @@ export function isSameOrigin(req) {
   }
 }
 
-export function createApi({ actions, store, settings }) {
+export function createApi({ actions, store, settings, now = () => Date.now() }) {
+  // Every page load asks; the services only need telling once a minute.
+  let cached = null;
+
   return {
     /** Is this deployment actually wired up? Safe to call signed out. */
     async health() {
@@ -55,8 +58,11 @@ export function createApi({ actions, store, settings }) {
      * deployment is exactly where you cannot just run the CLI.
      */
     async selfcheck() {
+      if (cached && now() - cached.at < 60000) return ok_(cached.body);
       const { steps, ok } = await liveCheck({ settings });
-      return ok_({ ok, steps, readUnderOtherNames: aliasesUsed });
+      const body = { ok, steps, readUnderOtherNames: aliasesUsed, checkedAt: new Date().toISOString() };
+      cached = { at: now(), body };
+      return ok_(body);
     },
 
     async login(req) {

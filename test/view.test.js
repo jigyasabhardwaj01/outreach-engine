@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STAGES, stageById, companiesIn, countsByStage, firstBusyStage, awaitingResearch,
-  metrics, formatDuration, asPercent,
+  metrics, formatDuration, asPercent, statusChips,
   PIPELINE, pipelineStageOf, pipelineCounts, furthestStage, bannerFor, researchQueueLine,
   actionState, verdictWording, answerWording, evidenceWording, sourceLabel, formatDate, wordCount, sendLabel, summaryLine, researchProgress,
 } from '../public/view.js';
@@ -243,4 +243,63 @@ test('a handed-back company gets its own tab and sits on the rail where it stopp
   // And it must not quietly vanish from every tab.
   const stages = STAGES.filter((s) => s.has({ status: 'manual_review' }));
   assert.equal(stages.length, 1);
+});
+
+// ---------------------------------------------------------------- what the header says
+
+const liveSteps = (over = {}) => ({
+  steps: [
+    { name: 'Gemini key', ok: true, detail: '41 models available', ...over.gemini },
+    { name: 'Hunter key', ok: true, detail: '3/50 searches used this month', ...over.hunter },
+    { name: 'Mailer (resend)', ok: true, detail: 'key accepted', ...over.mailer },
+  ],
+});
+
+test('before the live check lands, the header says only what it knows', () => {
+  const chips = statusChips({ ready: true, emailTo: 'me@mine.com' }, null);
+  assert.deepEqual(chips.map((c) => c.text), ['sends to me@mine.com']);
+});
+
+test('a key that is set but rejected is called rejected, not ready', () => {
+  // The failure this whole check exists for: present, so "ready", and refused.
+  const chips = statusChips(
+    { ready: true, emailTo: 'me@mine.com' },
+    liveSteps({ gemini: { ok: false, detail: 'HTTP 401: API key not valid' } }),
+  );
+  const gemini = chips.find((c) => c.text.includes('Gemini'));
+  assert.equal(gemini.text, 'Gemini key rejected');
+  assert.equal(gemini.tone, 'bad');
+  assert.match(gemini.title, /401/);
+});
+
+test('a working key says so', () => {
+  const chips = statusChips({ ready: true, emailTo: 'me@mine.com' }, liveSteps());
+  assert.equal(chips.find((c) => c.text.includes('Gemini')).text, 'Gemini ready');
+});
+
+test('no key at all still reads as no key', () => {
+  const chips = statusChips({ ready: false }, null);
+  assert.equal(chips[0].text, 'no Gemini key');
+  assert.equal(chips[0].tone, 'warn');
+});
+
+test('a model the key cannot use gets its own warning', () => {
+  const chips = statusChips({ ready: true }, { steps: [{ name: 'Model gemini-9', ok: false, detail: 'NOT available' }] });
+  assert.ok(chips.some((c) => c.text === 'model unavailable'));
+});
+
+test('Hunter usage is shown, because 50 searches a month runs out quietly', () => {
+  const chips = statusChips({ ready: true }, liveSteps());
+  assert.equal(chips.find((c) => c.text.includes('searches')).text, '3/50 searches used');
+});
+
+test('an unconfigured mailer is a warning, not an error', () => {
+  const chips = statusChips({ ready: true }, liveSteps({ mailer: { ok: false, detail: 'RESEND_API_KEY not set' } }));
+  const mailer = chips.find((c) => c.text === 'sending not set up');
+  assert.equal(mailer.tone, 'warn');
+  assert.match(mailer.title, /RESEND_API_KEY/);
+});
+
+test('a missing destination is still called out', () => {
+  assert.ok(statusChips({ ready: true, emailTo: null }, liveSteps()).some((c) => c.text === 'EMAIL_TO not set'));
 });

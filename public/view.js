@@ -110,6 +110,37 @@ export function bannerFor(companies) {
 }
 
 /**
+ * What to say across the top of the page.
+ *
+ * `live` is the answer from /api/selfcheck, which asks each service whether
+ * the key actually works. Until it arrives we can only say whether a key is
+ * set — and "set" is not "working": a stale key looks perfectly configured
+ * right up to the moment something uses it.
+ */
+export function statusChips(state = {}, live = null) {
+  const chips = [];
+  const step = (name) => (live?.steps ?? []).find((s) => s.name.startsWith(name));
+
+  const gemini = step('Gemini');
+  if (!state.ready) chips.push({ text: 'no Gemini key', tone: 'warn' });
+  else if (gemini && !gemini.ok) chips.push({ text: 'Gemini key rejected', tone: 'bad', title: gemini.detail });
+  else if (gemini?.ok) chips.push({ text: 'Gemini ready', tone: 'ok', title: gemini.detail });
+
+  const model = step('Model');
+  if (model && !model.ok) chips.push({ text: 'model unavailable', tone: 'bad', title: model.detail });
+
+  const hunter = step('Hunter');
+  if (hunter) chips.push({ text: hunter.ok ? hunter.detail.replace(' this month', '') : 'Hunter key rejected', tone: hunter.ok ? '' : 'bad', title: hunter.detail });
+
+  chips.push(state.emailTo ? { text: `sends to ${state.emailTo}` } : { text: 'EMAIL_TO not set', tone: 'warn' });
+
+  const mailer = step('Mailer');
+  if (mailer && !mailer.ok) chips.push({ text: 'sending not set up', tone: 'warn', title: mailer.detail });
+
+  return chips;
+}
+
+/**
  * The measurement plan, computed from what actually happened.
  *
  * These are the numbers that say whether the system is worth running: how long

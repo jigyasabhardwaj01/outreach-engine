@@ -3,7 +3,7 @@
 import {
   STAGES, stageById, companiesIn, countsByStage, firstBusyStage, awaitingResearch,
   PIPELINE, pipelineCounts, furthestStage, bannerFor, researchQueueLine,
-  metrics, formatDuration, asPercent,
+  metrics, formatDuration, asPercent, statusChips,
   actionState, verdictWording, answerWording, evidenceWording, sourceLabel, wordCount, sendLabel, summaryLine, researchProgress,
 } from './view.js';
 
@@ -23,6 +23,7 @@ function h(tag, props = {}, ...children) {
 }
 
 let state = { companies: {}, signedIn: false, needsPassword: false, ready: false };
+let live = null;
 let stage = null;
 let busy = false;
 
@@ -53,6 +54,19 @@ async function load() {
   state = await res.json();
   stage ??= firstBusyStage(state.companies);
   render();
+  askTheServices();
+}
+
+// Asked once a page load, in the background: whether the keys actually work.
+async function askTheServices() {
+  try {
+    const res = await fetch('/api/selfcheck');
+    if (!res.ok) return;
+    live = await res.json();
+    renderHeader();
+  } catch {
+    // Not knowing is not worth an error on screen; the chips stay as they were.
+  }
 }
 
 // Every button goes through here: one thing at a time, and the page always
@@ -312,9 +326,8 @@ function showClosed(message) {
 // ---------------------------------------------------------------- render
 
 function renderHeader() {
-  const chips = [];
-  if (!state.ready) chips.push(h('span', { class: 'pill warn' }, 'no Gemini key'));
-  chips.push(h('span', { class: 'pill' }, state.emailTo ? `sends to ${state.emailTo}` : 'EMAIL_TO not set'));
+  const chips = statusChips(state, live).map((chip) =>
+    h('span', { class: `pill ${chip.tone ?? ''}`.trim(), title: chip.title ?? '' }, chip.text));
 
   if (state.needsPassword) {
     chips.push(state.signedIn
