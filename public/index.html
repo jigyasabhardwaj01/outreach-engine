@@ -16,6 +16,10 @@
     --ok: #1f7a4d; --no: #a33a2a; --warn: #8a5a00; --warn-bg: #fdf4e6;
     --radius: 14px;
     --shadow: 0 1px 2px rgba(41, 34, 38, .05), 0 8px 24px -16px rgba(41, 34, 38, .25);
+    /* Kivo's depth: a card that floats rather than one that sits. */
+    --lift: 0 1px 2px rgba(41, 34, 38, .04), 0 18px 40px -24px rgba(41, 34, 38, .32);
+    --glass: rgba(255, 255, 255, .72);
+    --ease: cubic-bezier(.22, .61, .36, 1);
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -23,6 +27,8 @@
       --amber: #f0893d; --plum-1: #2d0a22; --plum-2: #591038;
       --ok: #6cc08b; --no: #e68a78; --warn: #e0b057; --warn-bg: #2c2415;
       --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -20px rgba(0, 0, 0, .8);
+      --lift: 0 1px 2px rgba(0, 0, 0, .45), 0 22px 48px -28px rgba(0, 0, 0, .9);
+      --glass: rgba(31, 27, 34, .66);
     }
   }
   * { box-sizing: border-box; }
@@ -37,8 +43,15 @@
 
   /* ---------- masthead ---------- */
   .masthead {
-    position: sticky; top: 0; z-index: 20; background: var(--paper);
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--paper) 78%, transparent);
+    backdrop-filter: blur(14px) saturate(1.4); -webkit-backdrop-filter: blur(14px) saturate(1.4);
     border-bottom: 1px solid var(--line); margin-bottom: 36px;
+  }
+  /* Backdrop filters are not everywhere; without one the bar must still be
+     opaque enough to read the page through it. */
+  @supports not (backdrop-filter: blur(1px)) {
+    .masthead { background: var(--paper); }
   }
   .masthead-inner {
     max-width: 900px; margin: 0 auto; padding: 13px 20px;
@@ -50,6 +63,51 @@
   .masthead .here { color: var(--soft); font-size: 14px; }
   .masthead #chips { margin-left: auto; display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
 
+  /* ---------- the hero scene ----------
+     An ambient wash, a field of dots and the orb, layered behind the words.
+     All three are decoration: none of them takes pointer events, and none is
+     announced to a screen reader. */
+  .scene { position: relative; isolation: isolate; }
+  .scene > .glow, .scene > .field {
+    position: absolute; inset: -40px -20px auto; height: 420px;
+    pointer-events: none; z-index: -1;
+  }
+  .glow {
+    background:
+      radial-gradient(ellipse 60% 48% at 50% 0%, color-mix(in srgb, var(--amber) 15%, transparent), transparent 70%),
+      radial-gradient(ellipse 42% 40% at 78% 24%, color-mix(in srgb, var(--plum-2) 11%, transparent), transparent 72%);
+  }
+  .field { width: calc(100% + 40px); opacity: .85; animation: drift 42s var(--ease) infinite; }
+  @keyframes drift {
+    0%, 100% { transform: translate3d(0, 0, 0); }
+    50% { transform: translate3d(-14px, 8px, 0); }
+  }
+
+  /* ---------- the orb ----------
+     Turning means requests are in flight. It is driven by what the page is
+     really doing, so a still orb is information too. */
+  .orbwrap { position: relative; width: 112px; height: 112px; margin: 2px auto 14px; }
+  .orb { width: 100%; height: 100%; display: block; }
+  .ring {
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 1px dashed color-mix(in srgb, var(--soft) 34%, transparent);
+    transition: border-color .7s var(--ease), opacity .7s var(--ease);
+  }
+  .ring.two { inset: -13px; opacity: .55; }
+  .ring.three { inset: -26px; opacity: .3; }
+  .orbwrap.live .ring { border-color: color-mix(in srgb, var(--amber) 52%, transparent); }
+  /* Only the rings turn when something is running; they are the cheapest
+     possible way to say "moving" and they cost one composited layer. */
+  .orbwrap.live .ring { animation: orbit 15s linear infinite; }
+  .orbwrap.live .ring.two { animation-duration: 23s; animation-direction: reverse; }
+  .orbwrap.live .ring.three { animation-duration: 34s; }
+  @keyframes orbit { to { transform: rotate(360deg); } }
+  .orblabel {
+    font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--soft); min-height: 15px; transition: color .5s var(--ease);
+  }
+  .orbwrap.live + .orblabel { color: var(--amber); }
+
   /* ---------- hero ---------- */
   .hero { text-align: center; padding: 26px 0 30px; }
   .hero h1 {
@@ -57,22 +115,73 @@
     font-size: clamp(30px, 6vw, 52px); font-weight: 700; line-height: 1.08; letter-spacing: -.028em;
   }
   .hero h1 em { font-style: normal; color: var(--amber); }
+  /* Each word rides up from behind its own clipped line. The mask is what
+     makes it read as typesetting rather than as things sliding about. */
+  .hero h1 .mask { display: inline-block; overflow: hidden; vertical-align: bottom; }
+  .hero h1 .mask > span {
+    display: inline-block; transform: translateY(105%);
+    transition: transform .62s var(--ease);
+  }
+  .hero h1.typed .mask > span { transform: none; }
   .hero p { max-width: 54ch; margin: 16px auto 0; color: var(--soft); }
 
-  /* ---------- pipeline rail ---------- */
-  .rail { display: flex; justify-content: center; gap: 0; margin: 32px auto 0; max-width: 680px; }
+  /* ---------- pipeline rail ----------
+     Kivo draws its architecture as nodes joined by lines with work moving
+     along them. The same picture fits here exactly, because this genuinely
+     is a pipeline — so an edge only carries a pulse when a company has
+     actually reached the far side of it. */
+  .rail {
+    display: flex; justify-content: center; gap: 0; margin: 30px auto 0; max-width: 680px;
+    /* Where the dot's centre lands: the step counter's height plus its gap,
+       plus half the dot. Everything that has to line up with the dot reads
+       this instead of carrying its own copy of the arithmetic. */
+    --step-h: 18px;
+    --wire: calc(var(--step-h) + 6px);
+  }
   .stop { flex: 1; text-align: center; position: relative; }
   .stop::before {
-    content: ''; position: absolute; top: 6px; left: -50%; width: 100%; height: 1.5px; background: var(--line);
+    content: ''; position: absolute; top: var(--wire); left: -50%; width: 100%; height: 1.5px;
+    background: var(--line); transition: background .6s var(--ease);
   }
   .stop:first-child::before { display: none; }
-  .stop.done::before { background: var(--amber); }
+  .stop.done::before { background: color-mix(in srgb, var(--amber) 55%, var(--line)); }
+
+  /* The pulse: a short bright run of the edge, travelling from one node to
+     the next. One composited gradient, no JavaScript per frame. */
+  .stop.flowing::after {
+    content: ''; position: absolute; top: calc(var(--wire) - .8px); left: -50%; width: 100%; height: 2.4px;
+    border-radius: 2px; background: linear-gradient(90deg, transparent, var(--amber), transparent);
+    background-size: 42% 100%; background-repeat: no-repeat;
+    animation: carry 2.4s var(--ease) infinite;
+  }
+  @keyframes carry {
+    0% { background-position: -45% 0; opacity: 0; }
+    12% { opacity: .95; }
+    78% { opacity: .95; }
+    100% { background-position: 125% 0; opacity: 0; }
+  }
+
   .dot {
     width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--line);
     background: var(--paper); margin: 0 auto 9px; position: relative; z-index: 1;
+    transition: border-color .5s var(--ease), background .5s var(--ease), box-shadow .5s var(--ease);
   }
   .stop.done .dot { border-color: var(--amber); }
   .stop.here .dot { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 0 4px color-mix(in srgb, var(--amber) 22%, transparent); }
+  /* The breathing ring on the node where the work currently is. */
+  .stop.here .dot::after {
+    content: ''; position: absolute; inset: -2px; border-radius: 50%;
+    border: 1.5px solid var(--amber); animation: breathe 2.6s var(--ease) infinite;
+  }
+  @keyframes breathe {
+    0% { transform: scale(1); opacity: .7; }
+    70%, 100% { transform: scale(2.4); opacity: 0; }
+  }
+  .stop .step {
+    font-size: 9px; letter-spacing: .1em; color: var(--soft); opacity: .5;
+    font-variant-numeric: tabular-nums; height: var(--step-h); line-height: var(--step-h);
+    white-space: nowrap;
+  }
   .stop .name { font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--soft); }
   .stop.done .name, .stop.here .name { color: var(--ink); }
   .stop .n { font-size: 11px; color: var(--soft); font-variant-numeric: tabular-nums; }
@@ -83,9 +192,19 @@
     background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
     padding: 20px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px;
   }
+  .do {
+    transition: box-shadow .4s var(--ease), border-color .4s var(--ease), transform .4s var(--ease);
+    transform-style: preserve-3d; will-change: transform;
+  }
+  .do:hover { box-shadow: var(--lift); border-color: color-mix(in srgb, var(--amber) 28%, var(--line)); }
   .do .icon {
     width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
     background: var(--amber); color: #fff; margin-bottom: 4px;
+    animation: hover-float 6s var(--ease) infinite;
+  }
+  @keyframes hover-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3.5px); }
   }
   .do .icon.plum { background: linear-gradient(135deg, var(--plum-1), var(--plum-2)); }
   .do h3 { margin: 0; font-size: 16.5px; font-weight: 600; letter-spacing: -.012em; }
@@ -128,7 +247,32 @@
   .card {
     background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
     padding: 20px; margin-bottom: 14px; box-shadow: var(--shadow);
+    transition: box-shadow .4s var(--ease), border-color .4s var(--ease), transform .4s var(--ease);
+    transform-style: preserve-3d; will-change: transform;
   }
+  .card:hover { box-shadow: var(--lift); border-color: color-mix(in srgb, var(--amber) 26%, var(--line)); }
+
+  /* Cards arrive rather than appear. Staggered in motion.js, so a list of
+     six reads top to bottom instead of all at once. */
+  .reveal { opacity: 0; transform: translateY(10px); transition: opacity .5s var(--ease), transform .5s var(--ease); }
+  .reveal.shown { opacity: 1; transform: none; }
+
+  /* How far through its questions a company is: a real fraction of the
+     profile's qualifiers, not a bar that creeps towards the end. */
+  .bar { height: 3px; border-radius: 3px; background: var(--raise); overflow: hidden; margin-top: 9px; }
+  .bar > i { display: block; height: 100%; border-radius: 3px; background: var(--amber); transition: width .7s var(--ease); }
+
+  /* A frosted panel, used where something floats over the page. */
+  .glass {
+    background: var(--glass); backdrop-filter: blur(14px) saturate(1.3);
+    -webkit-backdrop-filter: blur(14px) saturate(1.3);
+    border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  }
+
+  /* Swapping tabs: a short cross-fade, the way Kivo moves between pages. */
+  #list { transition: opacity .11s var(--ease), transform .11s var(--ease); }
+  #list.leaving { opacity: 0; transform: translateY(4px); }
+  #list.entering { opacity: 0; transform: translateY(-4px); transition: none; }
   .card.tight { padding: 14px 20px; }
   .between { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -145,8 +289,10 @@
 
   button {
     font: inherit; font-weight: 500; padding: 8px 15px; border-radius: 9px; border: 1px solid var(--line);
-    background: var(--card); color: var(--ink); cursor: pointer; transition: border-color .12s, background .12s, opacity .12s;
+    background: var(--card); color: var(--ink); cursor: pointer;
+    transition: border-color .2s var(--ease), background .2s var(--ease), opacity .2s var(--ease), transform .28s var(--ease), box-shadow .28s var(--ease);
   }
+  button.primary:hover:not(:disabled) { box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--ink) 55%, transparent); }
   button:hover:not(:disabled) { border-color: var(--soft); }
   button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible, .tab:focus-visible, #list:focus-visible {
     outline: 2px solid var(--amber); outline-offset: 2px;
@@ -164,6 +310,12 @@
   .pill.warn { background: var(--warn-bg); color: var(--warn); }
   .pill.bad { background: color-mix(in srgb, var(--no) 14%, transparent); color: var(--no); }
   .pill.ok { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+  .pill.live::before {
+    content: ''; display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+    background: currentColor; margin-right: 6px; vertical-align: 1px;
+    animation: blink 2.2s var(--ease) infinite;
+  }
+  @keyframes blink { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
   .verdict { font-weight: 600; }
   .verdict.qualify { color: var(--ok); }
   .verdict.reject { color: var(--no); }
@@ -182,7 +334,19 @@
   .stopline button { font-size: 13px; }
   .stopline:empty { display: none; }
   @keyframes pulse { 0%, 100% { opacity: .22; } 50% { opacity: 1; } }
-  @media (prefers-reduced-motion: reduce) { .status.working::after { animation: none; } }
+  /* Asked for less movement: everything stops. The orb still renders — it
+     is a picture of the system's state, and a still picture is fine — but
+     nothing drifts, pulses, breathes, floats, tilts or fades. The page is
+     fully usable with every animation here switched off, which is the test
+     that says whether the motion was decoration or load-bearing. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+      transition-duration: .001ms !important; scroll-behavior: auto !important;
+    }
+    .field, .glow { display: none; }
+    .reveal { opacity: 1; transform: none; }
+  }
 
   table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
   th, td { text-align: left; padding: 9px 8px; border-top: 1px solid var(--line); vertical-align: top; }
@@ -224,7 +388,9 @@
 
     .hero { padding: 16px 0 22px; }
     main { padding: 0 16px 70px; }
-    .rail { max-width: none; }
+    .rail { max-width: none; --step-h: 0px; --wire: 6px; }
+    .stop .step { display: none; }
+    .orbwrap { width: 88px; height: 88px; }
     /* Six labels will not fit across a phone, so show only where things are. */
     .stop .name { display: none; }
     .stop.here .name { display: block; font-size: 10px; letter-spacing: .06em; white-space: nowrap; }
@@ -243,9 +409,16 @@
 </header>
 
 <main>
-  <section class="hero">
+  <section class="hero scene">
+    <div class="glow" aria-hidden="true"></div>
+    <canvas class="field" id="field" aria-hidden="true"></canvas>
     <h1>Reach the right teams <em>with a real reason to talk.</em></h1>
     <p>Every company is checked against your profile. Each answer comes with its source, and nothing sends until you approve it.</p>
+    <div class="orbwrap" id="orbwrap" aria-hidden="true">
+      <span class="ring"></span><span class="ring two"></span><span class="ring three"></span>
+      <canvas class="orb" id="orb"></canvas>
+    </div>
+    <p class="orblabel" id="orblabel" aria-hidden="true"></p>
     <div class="rail" id="rail" role="group" aria-label="Pipeline progress"></div>
     <p class="status" id="status" role="status" aria-live="polite"></p>
     <div class="stopline" id="stop"></div>

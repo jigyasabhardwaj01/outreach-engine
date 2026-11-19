@@ -35,6 +35,10 @@ goes wrong:
 - **Questions stop at the first answer that decides.** A company rejected on
   headcount never costs you the rest of the API calls.
 
+The page's motion — the research orb, the pipeline rail's flow, the progress
+bars — is documented in [MOTION.md](MOTION.md): where each effect came from,
+what real state drives it, and what was deliberately left out.
+
 ## Getting started
 
 ```bash

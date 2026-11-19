@@ -27,7 +27,8 @@ export function isSameOrigin(req) {
   }
 }
 
-export function createApi({ actions, store, settings, now = () => Date.now() }) {
+/** @param {{ actions: any, store: any, settings: import('./env.js').Settings, profile?: any, now?: () => number }} options */
+export function createApi({ actions, store, settings, profile = null, now = () => Date.now() }) {
   // Every page load asks; the services only need telling once a minute.
   let cached = null;
 
@@ -100,6 +101,9 @@ export function createApi({ actions, store, settings, now = () => Date.now() }) 
         signedIn: signedIn(req, settings) || !settings.APP_PASSWORD,
         needsPassword: Boolean(settings.APP_PASSWORD),
         ready: Boolean(settings.GEMINI_API_KEY),
+        // How many questions a company has to answer. The page shows progress
+        // as a fraction of this rather than inventing a scale of its own.
+        questions: profile?.qualifiers?.length ?? 0,
       });
     },
 

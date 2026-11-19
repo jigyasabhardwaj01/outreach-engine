@@ -20,7 +20,7 @@ async function api() {
   const store = createStore(env);
   const llm = new Gemini();
 
-  cached = createApi({ actions: createActions({ profile, llm, store, settings: env }), store, settings: env });
+  cached = createApi({ actions: createActions({ profile, llm, store, settings: env }), store, settings: env, profile });
   return cached;
 }
 

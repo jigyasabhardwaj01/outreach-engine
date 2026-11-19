@@ -309,3 +309,64 @@ export function researchProgress(company) {
   if (company.status === 'shortlisted') return { answered: 0, text: 'not started' };
   return { answered, text: answered === 1 ? '1 question answered' : `${answered} questions answered` };
 }
+
+// ---------------------------------------------------------------- the motion layer
+//
+// What the animated pieces should be doing, decided here rather than in the
+// drawing code, so it is testable and so the visuals can never say something
+// the data does not.
+
+/**
+ * The state of the orb in the hero: the one object on the page that says
+ * whether the system is working, and how hard.
+ *
+ * It is driven by what is actually happening — not by a timer — so an orb
+ * spinning means real requests are in flight.
+ */
+export function orbState({ busy = false, stopping = false, companies = {}, ready = true } = {}) {
+  const counts = countsByStage(companies);
+  const all = Object.values(companies ?? {});
+
+  if (stopping) return { mode: 'stopping', intensity: 0.45, label: 'Finishing the question in flight' };
+  if (busy) return { mode: 'working', intensity: 1, label: 'Working' };
+  if (!ready) return { mode: 'idle', intensity: 0.12, label: 'Waiting for a key' };
+  if (counts.review || counts.emails || counts.handoff) return { mode: 'waiting', intensity: 0.3, label: 'Waiting for you' };
+  if (counts.waiting) return { mode: 'ready', intensity: 0.22, label: 'Ready to research' };
+  return { mode: 'idle', intensity: all.length ? 0.16 : 0.1, label: all.length ? 'Nothing waiting' : 'Nothing here yet' };
+}
+
+/**
+ * How far through its questions one company is, as a fraction.
+ *
+ * The profile decides how many questions there are, so the bar is a real
+ * proportion of real work rather than a guess that creeps toward the end.
+ */
+export function progressRatio(company, totalQuestions) {
+  const total = Number(totalQuestions) || 0;
+  if (!total) return null;
+  if (['researched', 'manual_review'].includes(company?.status)) return 1;
+  const answered = Object.keys(company?.progress?.answers ?? company?.answers ?? {}).length;
+  return Math.max(0, Math.min(1, answered / total));
+}
+
+/**
+ * Which connections in the pipeline rail currently carry work.
+ *
+ * An edge is live when there is something on the far side of it, so the
+ * pulses travelling along the rail are tracing companies that exist, not
+ * decoration running on a loop.
+ */
+export function railEdges(companies) {
+  const counts = pipelineCounts(companies);
+  const reached = (index) => PIPELINE.slice(index).some((stage) => counts[stage.id] > 0);
+
+  return PIPELINE.slice(1).map((stage, index) => ({
+    from: PIPELINE[index].id,
+    to: stage.id,
+    live: reached(index + 1),
+    carrying: counts[stage.id],
+  }));
+}
+
+/** The counter Kivo puts above each step: "03 / 06". */
+export const stepCounter = (index, total) => `${String(index + 1).padStart(2, '0')} / ${String(total).padStart(2, '0')}`;

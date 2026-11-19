@@ -45,8 +45,8 @@ function staticFile(dir, url) {
   return { file, type };
 }
 
-export function createServer({ actions, store, settings, page = path.join(ROOT, 'public', 'index.html') }) {
-  const api = createApi({ actions, store, settings });
+export function createServer({ actions, store, settings, profile = null, page = path.join(ROOT, 'public', 'index.html') }) {
+  const api = createApi({ actions, store, settings, profile });
   const publicDir = path.dirname(page);
 
   return http.createServer(async (req, res) => {

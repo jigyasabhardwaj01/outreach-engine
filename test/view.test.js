@@ -303,3 +303,88 @@ test('an unconfigured mailer is a warning, not an error', () => {
 test('a missing destination is still called out', () => {
   assert.ok(statusChips({ ready: true, emailTo: null }, liveSteps()).some((c) => c.text === 'EMAIL_TO not set'));
 });
+
+// ---------------------------------------------------------------- the motion layer
+//
+// The animated pieces are driven by these answers, so what they show can
+// never drift from what the data says. That is the whole reason this logic
+// is not inside the drawing code.
+
+test('the orb says what the system is actually doing', async () => {
+  const { orbState } = await import('../public/view.js');
+
+  // Working beats everything: something is in flight.
+  assert.equal(orbState({ busy: true }).mode, 'working');
+  assert.equal(orbState({ busy: true }).intensity, 1);
+
+  // Stopping is its own state, because "stopping" and "stopped" are different
+  // things to the person who just pressed the button.
+  assert.equal(orbState({ busy: true, stopping: true }).mode, 'stopping');
+  assert.match(orbState({ busy: true, stopping: true }).label, /in flight/i);
+
+  // Not busy, but something needs a person.
+  assert.equal(orbState({ companies: { a: { status: 'researched' } } }).mode, 'waiting');
+  assert.equal(orbState({ companies: { a: { status: 'drafted' } } }).mode, 'waiting');
+  assert.equal(orbState({ companies: { a: { status: 'manual_review' } } }).mode, 'waiting');
+
+  // Work queued, nobody needed yet.
+  assert.equal(orbState({ companies: { a: { status: 'shortlisted' } } }).mode, 'ready');
+
+  // Nothing to do at all, and nothing it could do.
+  assert.equal(orbState({ companies: {} }).mode, 'idle');
+  assert.equal(orbState({ ready: false }).mode, 'idle');
+  assert.match(orbState({ ready: false }).label, /key/i);
+});
+
+test('the orb is brighter the more is happening, and never out of range', async () => {
+  const { orbState } = await import('../public/view.js');
+  const of = (input) => orbState(input).intensity;
+
+  assert.ok(of({ busy: true }) > of({ companies: { a: { status: 'researched' } } }));
+  assert.ok(of({ companies: { a: { status: 'researched' } } }) > of({ companies: {} }));
+  for (const input of [{}, { busy: true }, { ready: false }, { companies: { a: { status: 'sent' } } }]) {
+    const value = of(input);
+    assert.ok(value >= 0 && value <= 1, `intensity ${value} is outside 0..1`);
+  }
+});
+
+test('a progress bar is a real fraction of the profile’s own questions', async () => {
+  const { progressRatio } = await import('../public/view.js');
+
+  assert.equal(progressRatio({ status: 'researching', progress: { answers: { a: 1, b: 2, c: 3 } } }, 7), 3 / 7);
+  assert.equal(progressRatio({ status: 'shortlisted' }, 7), 0);
+  // Finished is finished, however many questions were needed to get there:
+  // a company handed back at the cap is done being worked on.
+  assert.equal(progressRatio({ status: 'researched', answers: { a: 1 } }, 7), 1);
+  assert.equal(progressRatio({ status: 'manual_review', progress: { answers: {} } }, 7), 1);
+  // Nothing to divide by means no bar at all, rather than a bar at zero.
+  assert.equal(progressRatio({ status: 'shortlisted' }, 0), null);
+  assert.equal(progressRatio({ status: 'shortlisted' }, undefined), null);
+  // More answers than questions still cannot overflow the bar.
+  assert.equal(progressRatio({ status: 'researching', progress: { answers: { a: 1, b: 2 } } }, 1), 1);
+});
+
+test('only the edges that actually carry work are marked live', async () => {
+  const { railEdges } = await import('../public/view.js');
+
+  // Nothing anywhere: nothing flows.
+  assert.ok(railEdges({}).every((edge) => !edge.live));
+
+  // One company at the draft stage: everything up to it carries, and the
+  // edge into "send" does not, because nothing has been sent.
+  const edges = railEdges({ a: { status: 'drafted' } });
+  const live = edges.filter((edge) => edge.live).map((edge) => edge.to);
+  assert.deepEqual(live, ['research', 'qualify', 'contact', 'draft']);
+  assert.equal(edges.at(-1).to, 'send');
+  assert.equal(edges.at(-1).live, false);
+
+  // A rejected company has left the pipeline and carries nothing.
+  assert.ok(railEdges({ a: { status: 'rejected' } }).every((edge) => !edge.live));
+});
+
+test('step counters read the way a numbered list does', async () => {
+  const { stepCounter } = await import('../public/view.js');
+  assert.equal(stepCounter(0, 6), '01 / 06');
+  assert.equal(stepCounter(5, 6), '06 / 06');
+  assert.equal(stepCounter(9, 12), '10 / 12');
+});

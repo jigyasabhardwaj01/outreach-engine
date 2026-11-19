@@ -3,9 +3,11 @@
 import {
   STAGES, stageById, companiesIn, countsByStage, firstBusyStage, awaitingResearch,
   PIPELINE, pipelineCounts, furthestStage, bannerFor, researchQueueLine, runSummary,
+  orbState, progressRatio, railEdges, stepCounter,
   metrics, formatDuration, asPercent, statusChips,
   actionState, verdictWording, answerWording, evidenceWording, wordCount, sendLabel, summaryLine, researchProgress,
 } from './view.js';
+import { ResearchOrb, paintDotField, revealOnEntry, tiltOnHover, magnetic, swap, reducedMotion } from './motion.js';
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -38,6 +40,12 @@ let busy = false;
 // half-done, and the work already saved stays saved.
 let stopRequested = false;
 let canStop = false;
+let orb = null;
+// How many questions the profile asks, so a progress bar is a real fraction.
+let questionCount = 0;
+// Which tab the list is currently showing, so only a real change of tab
+// gets the cross-fade.
+let painted = null;
 
 // ---------------------------------------------------------------- talking to the API
 
@@ -64,6 +72,7 @@ async function load() {
     return showClosed(error ?? `The server said ${res.status}.`);
   }
   state = await res.json();
+  questionCount = state.questions ?? questionCount;
   stage ??= firstBusyStage(state.companies);
   render();
   askTheServices();
@@ -302,12 +311,17 @@ function handoffCard(company) {
 
 const shortlistRow = (company) => {
   const progress = researchProgress(company);
+  // A fraction of the profile's own questions, so the bar cannot overstate
+  // how far along a company is.
+  const ratio = progressRatio(company, questionCount);
+
   return h('article', { class: 'card tight' },
     h('div', { class: 'between' },
       h('div', {}, h('strong', {}, company.name ?? company.domain), ' ', h('span', { class: 'small soft' }, company.domain)),
       h('span', { class: 'small soft' }, progress.text),
     ),
     company.why ? h('p', { class: 'small soft' }, company.why) : null,
+    ratio === null ? null : h('div', { class: 'bar' }, h('i', { style: `width: ${Math.round(ratio * 100)}%` })),
   );
 };
 
@@ -364,7 +378,12 @@ function showClosed(message) {
 
 function renderHeader() {
   const chips = statusChips(state, live).map((chip) =>
-    h('span', { class: `pill ${chip.tone ?? ''}`.trim(), title: chip.title ?? '' }, chip.text));
+    h('span', {
+      // A quietly blinking dot on anything confirmed working, so "ready"
+      // reads as a live check rather than a label someone typed.
+      class: ['pill', chip.tone ?? '', chip.tone === 'ok' && 'live'].filter(Boolean).join(' '),
+      title: chip.title ?? '',
+    }, chip.text));
 
   if (state.needsPassword) {
     chips.push(state.signedIn
@@ -379,16 +398,27 @@ function renderHeader() {
 function renderRail() {
   const counts = pipelineCounts(state.companies);
   const furthest = furthestStage(state.companies);
-  const furthestAt = PIPELINE.findIndex((s) => s.id === furthest);
+  const furthestAt = PIPELINE.findIndex((stop) => stop.id === furthest);
+  // An edge only carries a pulse when something is really on the far side
+  // of it, so the movement traces companies rather than running on a loop.
+  const edges = railEdges(state.companies);
 
-  $('#rail').replaceChildren(...PIPELINE.map((stop, index) =>
-    h('div', {
-      class: ['stop', furthestAt >= 0 && index <= furthestAt && 'done', stop.id === furthest && 'here'].filter(Boolean).join(' '),
+  fill($('#rail'), PIPELINE.map((stop, index) => {
+    const edge = index > 0 ? edges[index - 1] : null;
+    return h('div', {
+      class: [
+        'stop',
+        furthestAt >= 0 && index <= furthestAt && 'done',
+        stop.id === furthest && 'here',
+        edge?.live && busy && 'flowing',
+      ].filter(Boolean).join(' '),
     },
+      h('div', { class: 'step' }, stepCounter(index, PIPELINE.length)),
       h('div', { class: 'dot' }),
       h('div', { class: 'name' }, stop.name),
       h('div', { class: 'n' }, counts[stop.id] ? String(counts[stop.id]) : ''),
-    )));
+    );
+  }));
 }
 
 const ICONS = {
@@ -441,6 +471,20 @@ function renderStop() {
   );
 }
 
+/**
+ * The orb, told what to show. It is the only piece of pure decoration here,
+ * and it stays honest by reading the same state everything else does: busy
+ * means requests are in flight, not that a timer is running.
+ */
+function renderOrb() {
+  const { mode, intensity, label } = orbState({ busy, stopping: stopRequested, companies: state.companies, ready: state.ready });
+  const live = ['working', 'stopping'].includes(mode);
+
+  $('#orbwrap').classList.toggle('live', live);
+  $('#orblabel').textContent = label;
+  orb?.setIntensity(intensity);
+}
+
 function renderToolbar() {
   const waiting = awaitingResearch(state.companies);
   $('#toolbar').replaceChildren(
@@ -463,6 +507,9 @@ function renderToolbar() {
       onclick: () => run('Researching', researchAll, { stoppable: true }),
     }),
   );
+
+  for (const card of $('#toolbar').querySelectorAll('.do')) tiltOnHover(card, { degrees: 2.4 });
+  for (const button of $('#toolbar').querySelectorAll('button')) magnetic(button, { pull: 0.18 });
 }
 
 function renderBanner() {
@@ -533,6 +580,7 @@ function renderTabs() {
 
 function render() {
   renderHeader();
+  renderOrb();
   renderRail();
   renderStop();
   renderToolbar();
@@ -544,11 +592,76 @@ function render() {
   const mine = companiesIn(state.companies, current.id);
   const draw = { review: companyCard, emails: emailCard, waiting: shortlistRow, handoff: handoffCard }[current.id] ?? plainRow;
 
-  fill($('#list'), mine.length ? mine.map(draw) : [h('p', { class: 'empty' }, current.empty)]);
+  // Changing tab is a change of subject, so it gets a short cross-fade the
+  // way Kivo moves between pages. Within a tab — after an action — the list
+  // is repainted in place, because fading the same content in and out on
+  // every click would be noise.
+  const paint = () => {
+    fill($('#list'), mine.length ? mine.map(draw) : [h('p', { class: 'empty' }, current.empty)]);
+    revealOnEntry($('#list').querySelectorAll('.card'));
+    for (const card of $('#list').querySelectorAll('.card')) tiltOnHover(card);
+    for (const button of $('#list').querySelectorAll('button.primary')) magnetic(button);
+  };
+
+  if (current.id === painted) paint();
+  else swap($('#list'), paint);
+  painted = current.id;
 }
 
 $('#signin').addEventListener('click', (event) => {
   if (event.target.id === 'signin') $('#signin').close();
 });
 
+// The scene behind the hero. Built once; the dot field is painted once and
+// left to drift under CSS, because repainting a full-width field every frame
+// is real battery for something nobody looks at directly.
+/**
+ * The headline, set a word at a time behind a mask so it arrives rather than
+ * appears. Done once on load: it is the front door, not something that should
+ * replay every time the page re-renders.
+ *
+ * The words come from the markup, so the sentence stays in the HTML where a
+ * reader or a search engine can find it, and the effect is only ever added on
+ * top of text that is already there.
+ */
+function typeHeadline() {
+  const heading = $('.hero h1');
+  if (reducedMotion()) return heading.classList.add('typed');
+
+  for (const part of [...heading.childNodes]) {
+    const words = (part.textContent ?? '').split(/(\s+)/).filter(Boolean);
+    const pieces = words.map((word) => {
+      if (!word.trim()) return document.createTextNode(word);
+      const mask = h('span', { class: 'mask' }, h('span', {}, word));
+      return mask;
+    });
+    part.replaceWith(...(part.nodeType === 1 ? [h(part.nodeName.toLowerCase(), {}, pieces)] : pieces));
+  }
+
+  let delay = 0;
+  for (const word of heading.querySelectorAll('.mask > span')) {
+    word.style.transitionDelay = `${delay}ms`;
+    delay += 42;
+  }
+  requestAnimationFrame(() => heading.classList.add('typed'));
+}
+
+function buildScene() {
+  typeHeadline();
+  orb = new ResearchOrb($('#orb'));
+  const field = $('#field');
+  const repaint = () => paintDotField(field);
+  repaint();
+
+  let timer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(timer);
+    timer = setTimeout(repaint, 160);
+  });
+  // Light and dark have different amber; the field is drawn with it.
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => setTimeout(repaint, 60));
+  if (reducedMotion()) field.hidden = true;
+}
+
+buildScene();
 load();
