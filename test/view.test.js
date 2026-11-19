@@ -388,3 +388,49 @@ test('step counters read the way a numbered list does', async () => {
   assert.equal(stepCounter(5, 6), '06 / 06');
   assert.equal(stepCounter(9, 12), '10 / 12');
 });
+
+test('the evidence graph points at the question that actually decided it', async () => {
+  const { evidenceGraph } = await import('../public/view.js');
+  const company = {
+    details: {
+      saas: { label: 'B2B SaaS', answer: 'b2b_saas', evidence: { quote: 'a B2B SaaS platform' } },
+      funding: { label: 'Funding stage', answer: 'unknown', evidence: null },
+      preparing: { label: 'Preparing for an audit', answer: 'yes', evidence: { kind: 'absence' } },
+    },
+    verdict: { kind: 'qualify', by: 'preparing', reason: 'Preparing for an audit.' },
+  };
+
+  const graph = evidenceGraph(company);
+  assert.equal(graph.nodes.length, 3);
+  assert.deepEqual(graph.nodes.filter((n) => n.decided).map((n) => n.key), ['preparing']);
+  // An answer with nothing behind it is drawn differently from a quoted one,
+  // and an absence that was really checked counts as sourced.
+  assert.deepEqual(graph.nodes.filter((n) => !n.sourced).map((n) => n.key), ['funding']);
+  assert.equal(graph.verdict.label, 'Worth writing to');
+
+  // Nothing to draw before there is a verdict, or before anything was asked.
+  assert.equal(evidenceGraph({ details: {}, verdict: { kind: 'qualify' } }), null);
+  assert.equal(evidenceGraph({ details: { a: {} } }), null);
+});
+
+test('the graph reads the key the answers are stored under', async () => {
+  const { evidenceGraph } = await import('../public/view.js');
+  // Real research writes the key twice — as the map key and as a field. Only
+  // the map key is guaranteed, so that is the one that has to be used.
+  const company = {
+    details: { preparing: { label: 'Preparing', answer: 'yes', evidence: { quote: 'q' } } },
+    verdict: { kind: 'qualify', by: 'preparing', reason: 'r' },
+  };
+  assert.equal(evidenceGraph(company).nodes[0].decided, true);
+});
+
+test('the orb’s arc counts companies that are finished, however they finished', async () => {
+  const { pipelineProgress } = await import('../public/view.js');
+  assert.equal(pipelineProgress({}), 0);
+  assert.equal(pipelineProgress({ a: { status: 'sent' }, b: { status: 'shortlisted' } }), 0.5);
+  // Ruled out is finished: it is not work still waiting to be done.
+  assert.equal(pipelineProgress({ a: { status: 'rejected' } }), 1);
+  assert.equal(pipelineProgress({ a: { status: 'researching' } }), 0);
+  const value = pipelineProgress({ a: { status: 'sent' }, b: { status: 'drafted' }, c: { status: 'shortlisted' } });
+  assert.ok(value > 0 && value < 1);
+});

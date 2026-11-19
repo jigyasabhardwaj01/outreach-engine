@@ -55,6 +55,11 @@ not go in.
 | Two-tone headline | Already here, as the amber `<em>` | — |
 | Text masking | The headline arrives a word at a time from behind a clipped line | once, on load |
 | Frosted panel | The masthead, which the page scrolls under | — |
+| Hub graphic — chips converging on a centre | **The evidence graph** on every reviewed company | `evidenceGraph()` — one chip per question that got an answer, lines converging on the verdict they produced. The question that actually decided it is solid amber; an answer with no source behind it is dashed |
+| SVG path drawing | Those converging lines draw themselves on | measured after layout, since they join real chip positions |
+| Arc segments around the sphere | **The arc around the orb** | `pipelineProgress()` — how much of the shortlist is finished, counting ruled-out as finished |
+| Analytics tiles counting up | The metrics strip | the real figure is written first, then counted up to; it is in the DOM from the start |
+| Interactive light | A soft light follows the pointer across a card | one radial gradient, two custom properties |
 
 ## What was left out, and why
 
@@ -87,6 +92,11 @@ here:
 - **An animation may never hide content.** The staggered reveal has a 1.2s
   safety net that shows everything regardless, so a observer that never fires
   cannot leave a card at `opacity: 0`.
+- **The number is there before the animation is.** The metrics strip writes
+  its real figures into the DOM first and only then counts up to them, so a
+  screen reader, a reduced-motion setting or a half-finished count all leave
+  the right number on screen. The same goes for the drawn lines, which snap
+  to fully drawn if the observer never fires.
 - **It has to be cheap.** One orb frame costs 0.193ms — 1.2% of a 60fps budget
   — and the orb drops to roughly 18fps when idle, stops when the tab is hidden,
   and stops when it scrolls out of view. The dot field is painted once per page

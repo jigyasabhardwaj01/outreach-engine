@@ -3,11 +3,11 @@
 import {
   STAGES, stageById, companiesIn, countsByStage, firstBusyStage, awaitingResearch,
   PIPELINE, pipelineCounts, furthestStage, bannerFor, researchQueueLine, runSummary,
-  orbState, progressRatio, railEdges, stepCounter,
+  orbState, progressRatio, railEdges, stepCounter, evidenceGraph, pipelineProgress,
   metrics, formatDuration, asPercent, statusChips,
   actionState, verdictWording, answerWording, evidenceWording, wordCount, sendLabel, summaryLine, researchProgress,
 } from './view.js';
-import { ResearchOrb, paintDotField, revealOnEntry, tiltOnHover, magnetic, swap, reducedMotion } from './motion.js';
+import { ResearchOrb, paintDotField, revealOnEntry, tiltOnHover, magnetic, swap, reducedMotion, countUp, spotlight, drawPath } from './motion.js';
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -191,6 +191,63 @@ const auditTrail = (company) => {
     : null;
 };
 
+const svgEl = (name, attributes = {}) => {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', name);
+  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
+  return node;
+};
+
+/**
+ * The research as a picture: every question that got an answer, converging on
+ * the verdict they produced.
+ *
+ * The chips are laid out by the browser, so the connecting lines can only be
+ * drawn once their real positions are known — hence the measure-then-draw
+ * after layout rather than coordinates worked out in advance.
+ */
+function evidenceGraphView(company) {
+  const graph = evidenceGraph(company);
+  if (!graph) return null;
+
+  const chips = graph.nodes.map((node) =>
+    h('span', {
+      class: ['node', node.decided && 'decided', !node.sourced && 'unsourced'].filter(Boolean).join(' '),
+      title: node.sourced ? '' : 'No source behind this answer.',
+    }, node.label, ' ', h('b', {}, node.answer)));
+
+  const wires = svgEl('svg', { class: 'wires', 'aria-hidden': 'true' });
+  const hub = h('div', { class: `hub ${graph.verdict.kind}` },
+    h('div', { class: 'kind' }, graph.verdict.label),
+    h('div', { class: 'why' }, graph.verdict.reason));
+
+  const view = h('div', { class: 'graph' }, wires, h('div', { class: 'chips' }, chips), hub);
+
+  // Drawn after the browser has placed the chips, because the lines join
+  // real positions and nothing knows those until layout has happened.
+  requestAnimationFrame(() => {
+    const box = view.getBoundingClientRect();
+    if (!box.width) return;
+    const hubBox = hub.getBoundingClientRect();
+    const toX = hubBox.left - box.left + hubBox.width / 2;
+    const toY = hubBox.top - box.top;
+
+    for (const [index, chip] of chips.entries()) {
+      const chipBox = chip.getBoundingClientRect();
+      const fromX = chipBox.left - box.left + chipBox.width / 2;
+      const fromY = chipBox.bottom - box.top;
+      const midY = (fromY + toY) / 2;
+      const path = svgEl('path', {
+        d: `M ${fromX} ${fromY} C ${fromX} ${midY}, ${toX} ${midY}, ${toX} ${toY}`,
+        class: graph.nodes[index].decided ? 'decided' : '',
+      });
+      wires.append(path);
+      drawPath(path, { delay: index * 60 });
+    }
+  });
+
+  return view;
+}
+
 function companyCard(company) {
   const { label, tone } = verdictWording(company.verdict);
   return h('article', { class: 'card' },
@@ -204,7 +261,8 @@ function companyCard(company) {
     ),
     ...(company.verdict?.notes ?? []).map((note) => h('p', { class: 'note small' }, note)),
     company.why ? h('p', { class: 'small soft' }, `Found by ${company.foundBy}: ${company.why}`) : null,
-    evidenceTable(company),
+    evidenceGraphView(company),
+    h('details', {}, h('summary', {}, 'Every answer, with its source'), evidenceTable(company)),
     auditTrail(company),
     h('div', { class: 'row actions' },
       actionButton('Approve and write', { primary: true, onclick: () => run(`Approving ${company.domain}`, () => call('decide', { domain: company.domain, decision: 'approve' })) }),
@@ -483,6 +541,10 @@ function renderOrb() {
   $('#orbwrap').classList.toggle('live', live);
   $('#orblabel').textContent = label;
   orb?.setIntensity(intensity);
+
+  // The arc is how far the whole shortlist has got, which is a different
+  // question from what the orb's brightness answers.
+  $('#arc')?.style.setProperty('--through', String(pipelineProgress(state.companies)));
 }
 
 function renderToolbar() {
@@ -532,6 +594,11 @@ function renderMetrics() {
     stat('sent', String(m.sent), 'Emails sent to your own address.'),
     m.handedBack ? stat('handed back', String(m.handedBack), 'Stopped at the lookup cap and left for you.') : null,
   );
+
+  // Kivo's analytics tiles count up the first time you see them. The real
+  // figure is already in the element before this runs, so nothing depends
+  // on the animation finishing.
+  for (const figure of $('#metrics').querySelectorAll('.figure')) countUp(figure);
 }
 
 /**
@@ -599,7 +666,10 @@ function render() {
   const paint = () => {
     fill($('#list'), mine.length ? mine.map(draw) : [h('p', { class: 'empty' }, current.empty)]);
     revealOnEntry($('#list').querySelectorAll('.card'));
-    for (const card of $('#list').querySelectorAll('.card')) tiltOnHover(card);
+    for (const card of $('#list').querySelectorAll('.card')) {
+      tiltOnHover(card);
+      spotlight(card);
+    }
     for (const button of $('#list').querySelectorAll('button.primary')) magnetic(button);
   };
 

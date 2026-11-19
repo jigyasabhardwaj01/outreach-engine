@@ -318,3 +318,97 @@ export function swap(panel, paint) {
   // The class drives a 110ms transition; this is the same duration, not a guess.
   setTimeout(done, 110);
 }
+
+/**
+ * Count a number up to its value the first time it is seen, the way Kivo's
+ * analytics tiles do.
+ *
+ * The number is written into the element before any of this runs, so the real
+ * figure is in the DOM from the start: if the animation never happens — no
+ * observer, reduced motion, a screen reader reading straight through — the
+ * right number is already there to be read.
+ */
+export function countUp(node, { duration = 900 } = {}) {
+  const final = node.textContent ?? '';
+  const match = final.match(/-?[\d.]+/);
+  if (!match || reducedMotion()) return;
+
+  const target = Number(match[0]);
+  if (!Number.isFinite(target) || target === 0) return;
+  const decimals = (match[0].split('.')[1] ?? '').length;
+
+  const observer = new IntersectionObserver(([entry], self) => {
+    if (!entry.isIntersecting) return;
+    self.disconnect();
+
+    const started = performance.now();
+    const step = (now) => {
+      const through = Math.min(1, (now - started) / duration);
+      // Ease out: most of the distance early, so it settles rather than stops.
+      const eased = 1 - Math.pow(1 - through, 3);
+      const value = (target * eased).toFixed(decimals);
+      node.textContent = final.replace(match[0], value);
+      if (through < 1) requestAnimationFrame(step);
+      else node.textContent = final;
+    };
+    requestAnimationFrame(step);
+  });
+
+  observer.observe(node);
+  // The real number must never be left behind by a half-finished count.
+  setTimeout(() => { observer.disconnect(); node.textContent = final; }, duration + 2500);
+}
+
+/**
+ * A soft light that follows the pointer across a card — Kivo's interactive
+ * light, which it does with a radial gradient rather than anything clever.
+ *
+ * Two custom properties and one composited layer; the gradient itself lives
+ * in the stylesheet.
+ */
+export function spotlight(node) {
+  if (reducedMotion() || !window.matchMedia('(hover: hover)').matches) return;
+
+  let frame = null;
+  node.addEventListener('pointermove', (event) => {
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = null;
+      const box = node.getBoundingClientRect();
+      node.style.setProperty('--mx', `${event.clientX - box.left}px`);
+      node.style.setProperty('--my', `${event.clientY - box.top}px`);
+    });
+  });
+  node.addEventListener('pointerenter', () => node.classList.add('lit'));
+  node.addEventListener('pointerleave', () => {
+    if (frame) cancelAnimationFrame(frame);
+    frame = null;
+    node.classList.remove('lit');
+  });
+}
+
+/**
+ * Draw an SVG path on, rather than having it appear.
+ *
+ * The trick is the oldest one in SVG: set the dash pattern to the length of
+ * the line and offset it by the same amount, so the line is entirely in the
+ * gap, then animate the offset to nothing.
+ */
+export function drawPath(path, { duration = 620, delay = 0 } = {}) {
+  const length = path.getTotalLength?.() ?? 0;
+  if (!length || reducedMotion()) return;
+
+  path.style.strokeDasharray = `${length}`;
+  path.style.strokeDashoffset = `${length}`;
+
+  const observer = new IntersectionObserver(([entry], self) => {
+    if (!entry.isIntersecting) return;
+    self.disconnect();
+    path.style.transition = `stroke-dashoffset ${duration}ms ${delay}ms cubic-bezier(.22,.61,.36,1)`;
+    requestAnimationFrame(() => { path.style.strokeDashoffset = '0'; });
+  });
+  observer.observe(path);
+
+  // Never leave a line half-drawn if the observer does not fire.
+  setTimeout(() => { observer.disconnect(); path.style.strokeDashoffset = '0'; }, duration + delay + 2000);
+}

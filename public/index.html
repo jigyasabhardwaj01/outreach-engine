@@ -69,7 +69,11 @@
      announced to a screen reader. */
   .scene { position: relative; isolation: isolate; }
   .scene > .glow, .scene > .field {
-    position: absolute; inset: -40px -20px auto; height: 420px;
+    /* Flush with the hero, not bleeding past it. A decorative layer wider
+       than its container is a horizontal scrollbar on narrow screens, and
+       these gradients fade to nothing well before the edge, so the bleed
+       bought no softness it did not already have. */
+    position: absolute; inset: -40px 0 auto; height: 420px;
     pointer-events: none; z-index: -1;
   }
   .glow {
@@ -77,10 +81,10 @@
       radial-gradient(ellipse 60% 48% at 50% 0%, color-mix(in srgb, var(--amber) 15%, transparent), transparent 70%),
       radial-gradient(ellipse 42% 40% at 78% 24%, color-mix(in srgb, var(--plum-2) 11%, transparent), transparent 72%);
   }
-  .field { width: calc(100% + 40px); opacity: .85; animation: drift 42s var(--ease) infinite; }
+  .field { opacity: .85; animation: drift 42s var(--ease) infinite; }
   @keyframes drift {
     0%, 100% { transform: translate3d(0, 0, 0); }
-    50% { transform: translate3d(-14px, 8px, 0); }
+    50% { transform: translate3d(0, 9px, 0); }
   }
 
   /* ---------- the orb ----------
@@ -102,6 +106,18 @@
   .orbwrap.live .ring.two { animation-duration: 23s; animation-direction: reverse; }
   .orbwrap.live .ring.three { animation-duration: 34s; }
   @keyframes orbit { to { transform: rotate(360deg); } }
+  /* Kivo draws arc segments around its sphere. Here the arc is how much of
+     the shortlist is finished — a real fraction, set from JavaScript as a
+     --through property between 0 and 1. */
+  .arc { position: absolute; inset: -6px; transform: rotate(-90deg); pointer-events: none; }
+  .arc circle {
+    fill: none; stroke-width: 1.6; cx: 50%; cy: 50%; r: 48%;
+    stroke-dasharray: var(--circumference, 302);
+    stroke-dashoffset: calc(var(--circumference, 302) * (1 - var(--through, 0)));
+    stroke: var(--amber); stroke-linecap: round;
+    transition: stroke-dashoffset .9s var(--ease);
+  }
+
   .orblabel {
     font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
     color: var(--soft); min-height: 15px; transition: color .5s var(--ease);
@@ -348,6 +364,46 @@
     .reveal { opacity: 1; transform: none; }
   }
 
+  /* ---------- the evidence graph ----------
+     Kivo's hub picture, doing a real job: every question that got an answer,
+     feeding the verdict it produced. The node that actually decided it is
+     the one drawn solid. */
+  .graph { margin-top: 15px; position: relative; }
+  .graph svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .graph .wires path { fill: none; stroke: var(--line); stroke-width: 1.2; }
+  .graph .wires path.decided { stroke: color-mix(in srgb, var(--amber) 70%, transparent); stroke-width: 1.6; }
+  .graph .chips { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; position: relative; }
+  .node {
+    font-size: 12px; border-radius: 999px; padding: 4px 11px; white-space: nowrap;
+    border: 1px solid var(--line); background: var(--paper); color: var(--soft);
+    transition: border-color .4s var(--ease), color .4s var(--ease), background .4s var(--ease);
+  }
+  .node.decided { border-color: var(--amber); color: var(--amber); background: color-mix(in srgb, var(--amber) 8%, transparent); }
+  .node.unsourced { border-style: dashed; opacity: .7; }
+  .node b { font-weight: 600; color: var(--ink); }
+  .node.decided b { color: var(--amber); }
+  .hub {
+    margin: 30px auto 0; width: max-content; max-width: 100%; text-align: center;
+    border-radius: 12px; padding: 9px 15px; border: 1px solid var(--line); background: var(--card);
+    position: relative; box-shadow: var(--shadow);
+  }
+  .hub .kind { font-size: 12.5px; font-weight: 600; }
+  .hub.qualify .kind { color: var(--ok); }
+  .hub.reject .kind { color: var(--no); }
+  .hub .why { font-size: 12px; color: var(--soft); }
+
+  /* A light that follows the pointer, which is how Kivo does its interactive
+     glow: one radial gradient, positioned from two custom properties. */
+  .card { --mx: 50%; --my: 0px; }
+  .card::before {
+    content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    opacity: 0; transition: opacity .35s var(--ease);
+    background: radial-gradient(260px circle at var(--mx) var(--my), color-mix(in srgb, var(--amber) 10%, transparent), transparent 70%);
+  }
+  .card { position: relative; }
+  .card.lit::before { opacity: 1; }
+  .card > * { position: relative; }
+
   table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
   th, td { text-align: left; padding: 9px 8px; border-top: 1px solid var(--line); vertical-align: top; }
   th { color: var(--soft); font-weight: 500; }
@@ -391,6 +447,9 @@
     .rail { max-width: none; --step-h: 0px; --wire: 6px; }
     .stop .step { display: none; }
     .orbwrap { width: 88px; height: 88px; }
+    /* Stacked chips make the converging lines meaningless, so they go. */
+    .graph svg.wires { display: none; }
+    .hub { margin-top: 14px; }
     /* Six labels will not fit across a phone, so show only where things are. */
     .stop .name { display: none; }
     .stop.here .name { display: block; font-size: 10px; letter-spacing: .06em; white-space: nowrap; }
@@ -416,6 +475,7 @@
     <p>Every company is checked against your profile. Each answer comes with its source, and nothing sends until you approve it.</p>
     <div class="orbwrap" id="orbwrap" aria-hidden="true">
       <span class="ring"></span><span class="ring two"></span><span class="ring three"></span>
+      <svg class="arc" id="arc" viewBox="0 0 100 100"><circle></circle></svg>
       <canvas class="orb" id="orb"></canvas>
     </div>
     <p class="orblabel" id="orblabel" aria-hidden="true"></p>

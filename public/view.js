@@ -370,3 +370,54 @@ export function railEdges(companies) {
 
 /** The counter Kivo puts above each step: "03 / 06". */
 export const stepCounter = (index, total) => `${String(index + 1).padStart(2, '0')} / ${String(total).padStart(2, '0')}`;
+
+/**
+ * The research, as a graph: every question that got an answer, converging on
+ * the verdict they produced.
+ *
+ * This is Kivo's hub picture — chips feeding a centre — doing a real job. The
+ * verdict engine walks the qualifiers in order and the first deciding answer
+ * ends it, so the node that decided is worth pointing at, and the ones that
+ * only carried the company forward are worth showing quieter.
+ */
+export function evidenceGraph(company) {
+  // Keyed by question key, and each detail also carries its own key. The map
+  // key is the authoritative one — it is what the answers are stored under —
+  // so read that and let the field be a duplicate.
+  const details = Object.entries(company?.details ?? {});
+  if (!details.length || !company?.verdict) return null;
+
+  const decidedBy = company.verdict.by ?? null;
+
+  return {
+    nodes: details.map(([key, detail]) => ({
+      key,
+      label: detail.label,
+      answer: answerWording(detail),
+      // Which of these actually settled it, and which merely did not stop it.
+      decided: key === decidedBy,
+      // An answer with no source behind it is worth showing as unsupported
+      // rather than quietly drawing it the same as a quoted one.
+      sourced: Boolean(detail.evidence?.quote || detail.evidence?.kind === 'absence'),
+    })),
+    verdict: {
+      kind: company.verdict.kind,
+      label: verdictWording(company.verdict).label,
+      reason: company.verdict.reason ?? '',
+    },
+  };
+}
+
+/**
+ * How far the whole shortlist has got, as one fraction, for the arc around
+ * the orb. Companies that have been ruled out are finished too — they are
+ * not work still waiting to be done.
+ */
+export function pipelineProgress(companies) {
+  const all = Object.values(companies ?? {});
+  if (!all.length) return 0;
+
+  const done = all.filter((company) =>
+    ['sent', 'rejected', 'email_rejected', 'manual_review', 'researched', 'drafted'].includes(company.status)).length;
+  return done / all.length;
+}
