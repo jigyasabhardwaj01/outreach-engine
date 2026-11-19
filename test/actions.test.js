@@ -315,3 +315,62 @@ test('every store can forget a company, and says whether it had one', async () =
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a search that runs past its budget asks to be tried again, and loses nothing', async () => {
+  // Measured against the real model, a grounded search runs 45 to 60
+  // seconds — straddling the sixty a serverless request gets. Being killed
+  // by the platform is a 504 with nothing to show for it; this is the
+  // alternative.
+  const { discoverStep } = await import('../src/discover.js');
+  const { MemoryStore } = await import('../src/store.js');
+  const { LlmTimeout } = await import('../src/llm.js');
+
+  const profile = { discovery: [{ source: 'Job posts', query: 'a' }], excludeDomains: [] };
+  const slow = { ask: async () => { throw new LlmTimeout('did not answer in time'); } };
+
+  const result = await discoverStep({ profile, llm: slow, store: new MemoryStore(), cursor: {}, limit: 10 });
+
+  assert.equal(result.retry, true);
+  assert.equal(result.done, false);
+  // The cursor has not moved on, so asking again resumes the same source
+  // rather than skipping it.
+  assert.deepEqual(result.cursor, { source: 0, phase: 'search' });
+  assert.match(result.label, /taking a while/);
+});
+
+test('a real failure is still a failure, not something to retry forever', async () => {
+  const { discoverStep } = await import('../src/discover.js');
+  const { MemoryStore } = await import('../src/store.js');
+  const { LlmError } = await import('../src/llm.js');
+
+  const profile = { discovery: [{ source: 'A', query: 'a' }], excludeDomains: [] };
+  const broken = { ask: async () => { throw new LlmError('Gemini 401: API key not valid'); } };
+
+  // A bad key must surface, not hide behind a retry loop that never ends.
+  await assert.rejects(
+    () => discoverStep({ profile, llm: broken, store: new MemoryStore(), cursor: {}, limit: 10 }),
+    /API key not valid/,
+  );
+});
+
+test('the model stops trying when the deadline has passed', async () => {
+  const { Gemini, LlmTimeout } = await import('../src/llm.js');
+
+  let calls = 0;
+  const gemini = new Gemini({
+    apiKey: 'k',
+    minGapMs: 0,
+    attempts: 4,
+    fetchImpl: async () => {
+      calls++;
+      return { status: 503, ok: false, json: async () => ({ error: { message: 'busy' } }) };
+    },
+  });
+
+  await assert.rejects(
+    () => gemini.ask({ prompt: 'x', deadline: Date.now() + 40 }),
+    (error) => error instanceof LlmTimeout,
+    'a deadline that has passed is a timeout, not a generic failure',
+  );
+  assert.ok(calls <= 2, `tried ${calls} times after the deadline had passed`);
+});

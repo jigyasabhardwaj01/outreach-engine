@@ -8,6 +8,11 @@ import { sleep } from './web.js';
 // when the truth is that we never managed to look.
 export class LlmError extends Error {}
 
+// The call did not finish inside the time it was given. Nothing is wrong
+// with the key, the model or the request — there just was not room for it in
+// this request, and asking again is the right response.
+export class LlmTimeout extends LlmError {}
+
 // This one piece of content could not be used: refused, or returned as garbage.
 // Only that source is lost, so the caller moves on to the next one.
 export class LlmUnusable extends LlmError {}
@@ -50,7 +55,7 @@ export class Gemini {
    * With `search` the model may search the web, and `citations` then says which
    * source it used for each sentence it wrote.
    */
-  async ask({ prompt, schema = null, search = false, temperature = 0.2 }) {
+  async ask({ prompt, schema = null, search = false, temperature = 0.2, timeoutMs = this.timeoutMs, deadline = Infinity }) {
     if (!this.apiKey) throw new LlmError('GEMINI_API_KEY is not set. Add it to .env.');
 
     const body = {
@@ -64,6 +69,9 @@ export class Gemini {
     }
 
     for (let attempt = 1; attempt <= this.attempts; attempt++) {
+      // Out of time to try again is a different thing from a failed call,
+      // and the caller needs to be able to tell them apart.
+      if (Date.now() > deadline) throw new LlmTimeout(`Gemini did not answer within the time allowed (${this.calls} calls so far).`);
       await this.#pace();
       this.calls++;
 
@@ -73,9 +81,10 @@ export class Gemini {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(this.timeoutMs),
+          signal: AbortSignal.timeout(Math.max(1000, Math.min(timeoutMs, deadline - Date.now()))),
         });
       } catch (error) {
+        if (Date.now() > deadline) throw new LlmTimeout(`Gemini did not answer within the time allowed (${error.name}).`);
         if (attempt === this.attempts) throw new LlmError(`Gemini unreachable: ${error.name}`);
         await sleep(attempt * 5000);
         continue;

@@ -134,15 +134,32 @@ function say(message, tone = '') {
 async function discoverAll() {
   let cursor = {};
   let added = 0;
-  // Two calls per source, plus headroom: a bound, not an expectation.
-  for (let step = 0; step < 24; step++) {
+  let retries = 0;
+  const giveUpAfter = 4;
+
+  // Two calls per source, plus room for a few retries: a bound, not an
+  // expectation.
+  for (let step = 0; step < 30; step++) {
     if (stopRequested) break;
     const result = await call('discoverStep', { cursor, limit: 10 });
     added += result.added ?? 0;
     if (result.label) say(`${result.label}…`, 'working');
+
+    // A web search can take longer than one request is allowed. The server
+    // hands back the same place in the sweep rather than dying, so this
+    // asks again — a few times, and then moves on rather than looping.
+    if (result.retry) {
+      if (++retries > giveUpAfter) {
+        return { text: `Searching is unusually slow right now. Shortlisted ${added} before giving up.`, tone: 'warn' };
+      }
+    } else {
+      retries = 0;
+    }
+
     if (result.done) break;
     cursor = result.cursor ?? {};
   }
+
   return {
     text: added ? `Shortlisted ${added} ${added === 1 ? 'company' : 'companies'}.` : 'Nothing new was found. Everything it turned up is already on the list.',
     tone: added ? 'ok' : '',

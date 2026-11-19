@@ -1,6 +1,7 @@
 // Finding companies worth looking at. This is a cheap first sweep, not a
 // judgement: everything it returns still has to survive the qualifiers.
 import { normalizeDomain } from './web.js';
+import { LlmTimeout } from './llm.js';
 
 const LIST_SCHEMA = {
   type: 'OBJECT',
@@ -29,14 +30,20 @@ const LIST_SCHEMA = {
  * calls back to back, several of them grounded web searches, which is minutes
  * of work behind a sixty-second limit — and a 504 with nothing to show for it.
  */
-export async function searchFor(llm, entry, wanted) {
+export async function searchFor(llm, entry, wanted, { deadline = Infinity } = {}) {
   const { text } = await llm.ask({
     search: true,
+    deadline,
     prompt: [
       `Search the web for: ${entry.query}.`,
       `Today is ${new Date().toISOString().slice(0, 10)}.`,
       `List up to ${wanted} real companies that are trading today.`,
-      `For each, give its name, its official website domain, and why it came up.`,
+      // Grounded search writes its answer while it searches, so the length
+      // of what we ask for is most of what we wait for. One terse line each
+      // is everything the extraction pass needs.
+      `Answer as one line per company and nothing else, in the form:`,
+      `Name — domain.com — six words on why it came up`,
+      `No preamble, no numbering, no closing summary.`,
     ].join('\n'),
   });
   return text;
@@ -125,24 +132,41 @@ export async function addDomains({ profile, store, domains }) {
  */
 /**
  * @param {{ profile: any, llm: any, store: any, limit?: number,
- *   cursor?: { source?: number, phase?: string, text?: string } }} options
+ *   budgetMs?: number, cursor?: { source?: number, phase?: string, text?: string } }} options
  */
-export async function discoverStep({ profile, llm, store, cursor = {}, limit = 10 }) {
+export async function discoverStep({ profile, llm, store, cursor = {}, limit = 10, budgetMs = 45000 }) {
   const sources = profile.discovery;
   const at = Number(cursor.source) || 0;
-  const perSource = Math.ceil(limit / sources.length) + 3;
+  const perSource = Math.ceil(limit / sources.length) + 2;
 
   if (at >= sources.length) return { done: true, added: 0, cursor: { source: at } };
   const entry = sources[at];
 
   if (cursor.phase !== 'extract') {
-    const text = await searchFor(llm, entry, perSource);
-    return {
-      done: false,
-      added: 0,
-      label: `Searching: ${entry.source}`,
-      cursor: { source: at, phase: 'extract', text },
-    };
+    // A grounded search is the slowest thing this project does. Measured
+    // against the real model it runs 45 to 60 seconds, which straddles the
+    // sixty a serverless request is allowed — so roughly half of them were
+    // being killed by the platform as a 504 with nothing to show for it.
+    // Bounding it under that limit means a slow one comes back as "ask me
+    // again", which the page can act on, instead of as a dead request.
+    try {
+      const text = await searchFor(llm, entry, perSource, { deadline: Date.now() + budgetMs });
+      return {
+        done: false,
+        added: 0,
+        label: `Searching: ${entry.source}`,
+        cursor: { source: at, phase: 'extract', text },
+      };
+    } catch (error) {
+      if (!(error instanceof LlmTimeout)) throw error;
+      return {
+        done: false,
+        added: 0,
+        retry: true,
+        label: `${entry.source} is taking a while — asking again`,
+        cursor: { source: at, phase: 'search' },
+      };
+    }
   }
 
   const candidates = await extractFrom(llm, String(cursor.text ?? ''), entry);

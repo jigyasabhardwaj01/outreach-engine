@@ -128,7 +128,7 @@ export class Researcher {
 
       let result;
       try {
-        result = await this.llm.ask({ prompt: this.#prompt(company, q, source.text), schema: schemaFor(q) });
+        result = await this.llm.ask({ prompt: this.#prompt(company, q, source.text), schema: schemaFor(q), deadline });
         result = result.json;
       } catch (error) {
         if (!(error instanceof LlmUnusable)) throw error;
