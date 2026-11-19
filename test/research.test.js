@@ -186,3 +186,122 @@ test('a company is rejected as soon as one answer disqualifies it', async () => 
   assert.equal(finished.verdict.code, 'not_saas');
   assert.equal(finished.answers.employees, undefined, 'the later questions were never asked');
 });
+
+// ---------------------------------------------------------------- not running past the clock
+
+test('a permanent fetch failure is not retried, and says what went wrong', async () => {
+  const { describeFailure } = await import('../src/web.js');
+
+  // Three retries of a name that does not resolve is eight seconds spent
+  // learning what the first attempt already knew.
+  const dead = describeFailure(Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } }));
+  assert.deepEqual(dead, { reason: 'no such host', permanent: true });
+
+  assert.equal(describeFailure({ name: 'TimeoutError' }).permanent, false, 'a timeout might not happen again');
+  assert.equal(describeFailure({ cause: { code: 'ECONNRESET' } }).permanent, false, 'a reset might not happen again');
+  assert.equal(describeFailure(Object.assign(new TypeError('x'), { cause: { code: 'ECONNREFUSED' } })).permanent, true);
+  assert.equal(describeFailure(Object.assign(new TypeError('x'), { cause: { code: 'CERT_HAS_EXPIRED' } })).permanent, true);
+  // Unknown causes stay retryable: guessing "permanent" would lose real pages.
+  assert.equal(describeFailure(new Error('something new')).permanent, false);
+});
+
+test('a question that runs out of time does not become a verdict about the company', async () => {
+  const { Researcher } = await import('../src/research.js');
+  const { MemoryStore } = await import('../src/store.js');
+  const profile = (await import('../profiles/compliance-saas.js')).default;
+
+  // A clock that has already run past the budget by the time the first
+  // source is reached.
+  let clock = 0;
+  const now = () => (clock += 60000);
+  const store = new MemoryStore();
+  const researcher = new Researcher({
+    profile,
+    llm: { ask: async () => assert.fail('no source should have been read') },
+    store,
+    fetchPage: async () => assert.fail('no page should have been fetched'),
+    stepBudgetMs: 1000,
+  });
+
+  const saved = await researcher.step({ domain: 'slow.example', name: 'Slow', status: 'shortlisted' }, { now });
+
+  assert.equal(saved.status, 'researching', 'it is still being researched, not decided');
+  assert.equal(saved.verdict, undefined, 'no verdict was reached');
+  // The crucial part: nothing was recorded as an answer. Recording "unknown"
+  // would have the profile reject the company for insufficient evidence —
+  // turning a slow website into a judgement about the business.
+  assert.deepEqual(saved.progress.answers, {});
+  assert.equal(saved.progress.stalled.saas, 1);
+});
+
+test('a question that keeps running out of time is handed back, not guessed at', async () => {
+  const { Researcher } = await import('../src/research.js');
+  const { MemoryStore } = await import('../src/store.js');
+  const profile = (await import('../profiles/compliance-saas.js')).default;
+
+  let clock = 0;
+  const now = () => (clock += 60000);
+  const store = new MemoryStore();
+  const researcher = new Researcher({
+    profile, llm: { ask: async () => ({ json: {} }) }, store,
+    fetchPage: async () => ({ status: 'failed', reason: 'slow' }),
+    stepBudgetMs: 1000,
+  });
+
+  let company = { domain: 'slow.example', name: 'Slow', status: 'shortlisted' };
+  for (let attempt = 0; attempt < 3; attempt++) company = await researcher.step(company, { now });
+
+  assert.equal(company.status, 'manual_review');
+  assert.match(company.handoff.reason, /could not be answered in time/);
+  assert.match(company.handoff.reason, /too slow/);
+  assert.ok(company.handoff.unanswered.length > 0);
+  assert.equal(company.verdict, undefined, 'still no verdict — a person decides this one');
+});
+
+test('running out of time never lets silence count as an answer', async () => {
+  const { Researcher } = await import('../src/research.js');
+  const { MemoryStore } = await import('../src/store.js');
+  const { qualifier, page, defineProfile, reject, qualify } = await import('../src/profile.js');
+
+  // A qualifier where absence means something, which is exactly where
+  // stopping early must not be mistaken for having looked.
+  const q = qualifier({
+    key: 'certified', label: 'Certified', ask: 'Certified?',
+    answers: ['yes', 'no'], sufficientWhen: 'Stated.',
+    sources: [page('/security'), page('/trust')],
+    absenceAnswer: 'no',
+    outcomes: { yes: reject('already', 'already certified'), no: qualify('gap', 'no certification') },
+  });
+  const profile = defineProfile({
+    seller: { product: 'p', oneLiner: 'o' },
+    discovery: [{ source: 's', query: 'q' }],
+    defaultVerdict: reject('none', 'none'),
+    qualifiers: [q],
+  });
+
+  // The call order is: the step starts the clock, then the question checks
+  // it before each source. So the first source is reached in good time and
+  // the clock has run out by the second.
+  let calls = 0;
+  const times = [0, 10, 99999, 99999];
+  let at = 0;
+  const now = () => times[Math.min(at++, times.length - 1)];
+
+  const researcher = new Researcher({
+    profile,
+    llm: { ask: async () => ({ json: { answer: 'not_stated', sufficient: false } }) },
+    store: new MemoryStore(),
+    fetchPage: async () => (calls++, { status: 'ok', url: 'https://a.example/security', text: 'nothing relevant here at all, repeated to pass the length check'.repeat(5), links: [] }),
+    stepBudgetMs: 50,
+  });
+
+  const saved = await researcher.step({ domain: 'a.example', status: 'shortlisted' }, { now });
+
+  // "no" would have been a qualifying verdict. It must not be reached by
+  // running out of time partway down the list of places to look — so look
+  // wherever an answer could have been recorded, not just one of them.
+  const recorded = { ...(saved.answers ?? {}), ...(saved.progress?.answers ?? {}) };
+  assert.equal(recorded.certified, undefined, 'nothing was concluded about certification');
+  assert.equal(saved.status, 'researching');
+  assert.equal(calls, 1, 'only the first page was read before the clock ran out');
+});

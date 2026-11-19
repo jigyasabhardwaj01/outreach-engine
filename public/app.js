@@ -7,7 +7,7 @@ import {
   metrics, formatDuration, asPercent, statusChips,
   actionState, verdictWording, answerWording, evidenceWording, wordCount, sendLabel, summaryLine, researchProgress,
 } from './view.js';
-import { ResearchOrb, paintDotField, revealOnEntry, tiltOnHover, magnetic, swap, reducedMotion, countUp, spotlight, drawPath } from './motion.js';
+import { ResearchOrb, paintDotField, revealOnEntry, tiltOnHover, magnetic, swap, reducedMotion, countUp, spotlight, drawPath, parallax, marquee } from './motion.js';
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -73,6 +73,7 @@ async function load() {
   }
   state = await res.json();
   questionCount = state.questions ?? questionCount;
+  buildTicker(state.checks);
   stage ??= firstBusyStage(state.companies);
   render();
   askTheServices();
@@ -121,12 +122,49 @@ function say(message, tone = '') {
   status.className = `status ${tone}`;
 }
 
+/**
+ * A discovery sweep, one model call at a time.
+ *
+ * The whole sweep is six calls, several of them grounded web searches. Asking
+ * for it in one request meant minutes of work behind a sixty-second limit,
+ * which is where the 504 came from. Each call is its own request now, so the
+ * sweep cannot time out however slow the model is, and stopping halfway keeps
+ * whatever was already shortlisted.
+ */
+async function discoverAll() {
+  let cursor = {};
+  let added = 0;
+  // Two calls per source, plus headroom: a bound, not an expectation.
+  for (let step = 0; step < 24; step++) {
+    if (stopRequested) break;
+    const result = await call('discoverStep', { cursor, limit: 10 });
+    added += result.added ?? 0;
+    if (result.label) say(`${result.label}…`, 'working');
+    if (result.done) break;
+    cursor = result.cursor ?? {};
+  }
+  return {
+    text: added ? `Shortlisted ${added} ${added === 1 ? 'company' : 'companies'}.` : 'Nothing new was found. Everything it turned up is already on the list.',
+    tone: added ? 'ok' : '',
+  };
+}
+
 // Research is asked for one question at a time: nothing runs long, and
 // stopping costs at most the question in flight.
 //
 // One company failing — a quota refusal, a site that will not load — must not
 // take the rest of the queue with it, the same way it does not in the CLI.
 // What failed is collected and reported at the end rather than thrown away.
+/** One company, to the end of its questions. */
+async function researchOne(domain, position = '') {
+  for (let step = 0; step < 60; step++) {
+    if (stopRequested) break;
+    const result = await call('researchStep', { domain });
+    if (result.done) return;
+    say(`${domain} — ${result.next ?? 'thinking'}${position}`, 'working');
+  }
+}
+
 async function researchAll() {
   const waiting = companiesIn(state.companies, 'waiting');
   const failed = [];
@@ -134,12 +172,7 @@ async function researchAll() {
   for (const [index, company] of waiting.entries()) {
     if (stopRequested) break;
     try {
-      for (let step = 0; step < 60; step++) {
-        if (stopRequested) break;
-        const result = await call('researchStep', { domain: company.domain });
-        if (result.done) break;
-        say(`${company.domain} — ${result.next ?? 'thinking'} (${index + 1} of ${waiting.length})`, 'working');
-      }
+      await researchOne(company.domain, ` (${index + 1} of ${waiting.length})`);
     } catch (error) {
       failed.push({ domain: company.domain, reason: error.message });
     }
@@ -380,6 +413,19 @@ const shortlistRow = (company) => {
     ),
     company.why ? h('p', { class: 'small soft' }, company.why) : null,
     ratio === null ? null : h('div', { class: 'bar' }, h('i', { style: `width: ${Math.round(ratio * 100)}%` })),
+    h('div', { class: 'row actions' },
+      actionButton('Research this one', {
+        primary: true,
+        onclick: () => run(`Researching ${company.domain}`, async () => {
+          await researchOne(company.domain);
+          return { text: `Finished ${company.domain}.`, tone: 'ok' };
+        }, { stoppable: true }),
+      }),
+      actionButton('Remove', {
+        danger: true, needs: 'none',
+        onclick: () => run(`Removing ${company.domain}`, () => call('forget', { domain: company.domain })),
+      }),
+    ),
   );
 };
 
@@ -547,6 +593,50 @@ function renderOrb() {
   $('#arc')?.style.setProperty('--through', String(pipelineProgress(state.companies)));
 }
 
+/**
+ * Look a company up by name, or add it straight away if you typed a domain.
+ *
+ * This is the thing the page was missing: every other way in went through
+ * the profile's own searches, so a company you already had in mind could
+ * only be added from the command line.
+ */
+function searchCard() {
+  const field = h('input', {
+    type: 'text',
+    placeholder: 'acme.com, or Acme Analytics',
+    'aria-label': 'Company name or website',
+    id: 'lookup',
+  });
+
+  const submit = () => {
+    const query = field.value.trim();
+    if (!query) return say('Type a company name or a website address first.', 'bad');
+    return run(`Looking up ${query}`, async () => {
+      const result = await call('lookup', { query });
+      if (result.added) {
+        field.value = '';
+        return { text: `Added ${result.company?.domain ?? query}. Research it when you are ready.`, tone: 'ok' };
+      }
+      return { text: result.reason ?? 'Nothing was added.', tone: 'warn' };
+    });
+  };
+
+  field.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') submit();
+  });
+
+  const { enabled, reason } = actionState({ signedIn: state.signedIn, ready: state.ready, busy });
+  return h('div', { class: 'do find' },
+    icon('search'),
+    h('h3', {}, 'Add a company you know'),
+    h('p', {}, 'A website address goes straight on the list. A name is looked up first, and never guessed at.'),
+    h('div', { class: 'row fields' },
+      field,
+      h('button', { class: 'primary', disabled: !enabled, title: reason, onclick: submit }, 'Add'),
+    ),
+  );
+}
+
 function renderToolbar() {
   const waiting = awaitingResearch(state.companies);
   $('#toolbar').replaceChildren(
@@ -555,10 +645,7 @@ function renderToolbar() {
       title: 'Find companies',
       body: 'Search free sources for companies that may need what you sell soon.',
       label: 'Find 10 companies',
-      onclick: () => run('Searching for companies', async () => {
-        const { added } = await call('discover', { limit: 10 });
-        say(`Shortlisted ${added}.`, 'ok');
-      }),
+      onclick: () => run('Searching for companies', discoverAll, { stoppable: true }),
     }),
     doCard({
       iconName: 'doc',
@@ -568,6 +655,7 @@ function renderToolbar() {
       label: waiting ? 'Research shortlisted' : 'Nothing to research',
       onclick: () => run('Researching', researchAll, { stoppable: true }),
     }),
+    searchCard(),
   );
 
   for (const card of $('#toolbar').querySelectorAll('.do')) tiltOnHover(card, { degrees: 2.4 });
@@ -716,6 +804,14 @@ function typeHeadline() {
   requestAnimationFrame(() => heading.classList.add('typed'));
 }
 
+/** The strip of what every company is checked against. */
+function buildTicker(checks) {
+  const track = $('#ticker .track');
+  if (!checks?.length || track.childElementCount) return;
+  fill(track, checks.map((label) => h('span', { class: 'check' }, label)));
+  marquee(track);
+}
+
 function buildScene() {
   typeHeadline();
   orb = new ResearchOrb($('#orb'));
@@ -731,6 +827,15 @@ function buildScene() {
   // Light and dark have different amber; the field is drawn with it.
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => setTimeout(repaint, 60));
   if (reducedMotion()) field.hidden = true;
+
+  // Depth on scroll: the wash furthest back moves least, the orb most. Small
+  // rates on purpose — at the depth a marketing page uses, the background
+  // slides behind text you are trying to read.
+  parallax([
+    { node: $('.glow'), rate: 0.16 },
+    { node: field, rate: 0.09 },
+    { node: $('#orbwrap'), rate: -0.05 },
+  ]);
 }
 
 buildScene();

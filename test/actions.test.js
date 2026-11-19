@@ -146,3 +146,172 @@ test('the API rejects an unknown action and reports a failure as an error', asyn
     assert.equal((await fetch(`${base}/nope`)).status, 404);
   });
 });
+
+// ---------------------------------------------------------------- discovery that cannot time out
+
+test('a discovery sweep is one model call per request', async () => {
+  // Six calls back to back, several of them grounded web searches, is minutes
+  // of work. Behind a sixty-second serverless limit that is a 504 with
+  // nothing to show for it, which is exactly what the hosted copy returned.
+  const { discoverStep } = await import('../src/discover.js');
+  const { MemoryStore } = await import('../src/store.js');
+
+  const profile = {
+    discovery: [{ source: 'Job posts', query: 'a' }, { source: 'Funding', query: 'b' }],
+    excludeDomains: [],
+  };
+
+  let calls = 0;
+  const llm = {
+    async ask({ search }) {
+      calls++;
+      if (search) return { text: 'Acme (acme.com) came up. Northwind (northwind.io) came up.' };
+      return { json: { companies: [{ name: 'Acme', domain: 'acme.com' }, { name: 'Northwind', domain: 'northwind.io' }] } };
+    },
+  };
+
+  const store = new MemoryStore();
+  let cursor = {};
+  let steps = 0;
+  let added = 0;
+  for (;;) {
+    const before = calls;
+    const result = await discoverStep({ profile, llm, store, cursor, limit: 10 });
+    assert.equal(calls - before, 1, `step ${steps + 1} made ${calls - before} model calls, not one`);
+    added += result.added;
+    steps++;
+    if (result.done) break;
+    cursor = result.cursor;
+    assert.ok(steps < 10, 'the sweep did not finish');
+  }
+
+  assert.equal(steps, 4, 'two sources, two calls each');
+  assert.equal(added, 2, 'the second source found nothing new, because it is the same two companies');
+  assert.equal(Object.keys(await store.all()).length, 2);
+});
+
+test('a sweep that is interrupted keeps what it already shortlisted', async () => {
+  const { discoverStep } = await import('../src/discover.js');
+  const { MemoryStore } = await import('../src/store.js');
+
+  const profile = { discovery: [{ source: 'A', query: 'a' }, { source: 'B', query: 'b' }], excludeDomains: [] };
+  const llm = {
+    async ask({ search }) {
+      if (search) return { text: 'Acme (acme.com)' };
+      return { json: { companies: [{ name: 'Acme', domain: 'acme.com' }] } };
+    },
+  };
+  const store = new MemoryStore();
+
+  const first = await discoverStep({ profile, llm, store, cursor: {}, limit: 10 });
+  const second = await discoverStep({ profile, llm, store, cursor: first.cursor, limit: 10 });
+
+  // Stopping here is what closing the tab does. The company is already saved.
+  assert.equal(second.added, 1);
+  assert.equal(second.done, false, 'there is a second source still to go');
+  assert.ok(await store.has('acme.com'));
+});
+
+test('a cursor past the end of the sources is finished, not an error', async () => {
+  const { discoverStep } = await import('../src/discover.js');
+  const { MemoryStore } = await import('../src/store.js');
+  const profile = { discovery: [{ source: 'A', query: 'a' }], excludeDomains: [] };
+
+  const result = await discoverStep({ profile, llm: null, store: new MemoryStore(), cursor: { source: 9 }, limit: 10 });
+  assert.deepEqual({ done: result.done, added: result.added }, { done: true, added: 0 });
+});
+
+// ---------------------------------------------------------------- adding a company you know
+
+test('a domain you type goes straight on the list, with no model call', async () => {
+  const { lookupCompany } = await import('../src/discover.js');
+  const { MemoryStore } = await import('../src/store.js');
+  const profile = { discovery: [], excludeDomains: ['sprinto.com'] };
+  const llm = { ask: async () => assert.fail('a domain needs no looking up') };
+  const store = new MemoryStore();
+
+  const result = await lookupCompany({ profile, llm, store, query: 'https://www.acme.com/pricing' });
+  assert.equal(result.added, true);
+  assert.equal(result.company.domain, 'acme.com', 'the scheme, the www and the path are all stripped');
+});
+
+test('a name is looked up, and a company that cannot be found is said so', async () => {
+  const { lookupCompany } = await import('../src/discover.js');
+  const { MemoryStore } = await import('../src/store.js');
+  const profile = { discovery: [], excludeDomains: [] };
+
+  const found = { ask: async () => ({ json: { found: true, name: 'Acme Analytics', domain: 'acme.io', why: 'B2B SaaS' } }) };
+  const result = await lookupCompany({ profile, llm: found, store: new MemoryStore(), query: 'Acme Analytics' });
+  assert.equal(result.added, true);
+  assert.equal(result.company.domain, 'acme.io');
+  assert.match(result.company.foundBy, /Acme Analytics/);
+
+  // A model that cannot find it must say so rather than guess: a wrong domain
+  // sends a stranger's website to be researched as if it were theirs.
+  const missing = { ask: async () => ({ json: { found: false } }) };
+  const nothing = await lookupCompany({ profile, llm: missing, store: new MemoryStore(), query: 'A Company That Does Not Exist' });
+  assert.equal(nothing.added, false);
+  assert.match(nothing.reason, /Could not find/);
+});
+
+test('looking up refuses the empty, the excluded and the already-listed', async () => {
+  const { lookupCompany } = await import('../src/discover.js');
+  const { MemoryStore } = await import('../src/store.js');
+  const profile = { discovery: [], excludeDomains: ['sprinto.com'] };
+  const llm = { ask: async () => assert.fail('no model call expected') };
+
+  await assert.rejects(() => lookupCompany({ profile, llm, store: new MemoryStore(), query: '   ' }), /name or a domain/);
+
+  const excluded = await lookupCompany({ profile, llm, store: new MemoryStore(), query: 'sprinto.com' });
+  assert.equal(excluded.added, false);
+  assert.match(excluded.reason, /exclude list/);
+
+  const store = new MemoryStore();
+  await lookupCompany({ profile, llm, store, query: 'acme.com' });
+  const again = await lookupCompany({ profile, llm, store, query: 'acme.com' });
+  assert.equal(again.added, false);
+  assert.match(again.reason, /already on the list/);
+});
+
+test('a domain the model returns is cleaned up, and nonsense is refused', async () => {
+  const { lookupCompany } = await import('../src/discover.js');
+  const { MemoryStore } = await import('../src/store.js');
+  const profile = { discovery: [], excludeDomains: [] };
+
+  const messy = { ask: async () => ({ json: { found: true, domain: 'https://www.Acme.COM/about' } }) };
+  const cleaned = await lookupCompany({ profile, llm: messy, store: new MemoryStore(), query: 'Acme' });
+  assert.equal(cleaned.company.domain, 'acme.com');
+
+  const rubbish = { ask: async () => ({ json: { found: true, domain: 'not a domain at all' } }) };
+  const refused = await lookupCompany({ profile, llm: rubbish, store: new MemoryStore(), query: 'Acme' });
+  assert.equal(refused.added, false);
+  assert.match(refused.reason, /not a website address/);
+});
+
+// ---------------------------------------------------------------- forgetting
+
+test('every store can forget a company, and says whether it had one', async () => {
+  const { MemoryStore, JsonStore } = await import('../src/store.js');
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+
+  const memory = new MemoryStore();
+  await memory.put({ domain: 'a.com' });
+  assert.equal(await memory.remove('a.com'), true);
+  assert.equal(await memory.remove('a.com'), false, 'removing it twice is not an error');
+  assert.equal(await memory.count(), 0);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'outreach-'));
+  try {
+    const file = new JsonStore(path.join(dir, 'c.json'));
+    await file.put({ domain: 'a.com' });
+    await file.put({ domain: 'b.com' });
+    assert.equal(await file.remove('a.com'), true);
+    assert.equal(await file.remove('nope.com'), false);
+    // It has to survive a reopen, or it was never really removed.
+    assert.deepEqual(Object.keys(await new JsonStore(path.join(dir, 'c.json')).all()), ['b.com']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

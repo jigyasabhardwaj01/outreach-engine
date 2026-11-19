@@ -185,10 +185,39 @@ export async function fetchPage(url, { attempts = 3, timeoutMs = 20000, maxChars
         fetchedAt: new Date().toISOString().slice(0, 10),
       };
     } catch (error) {
-      reason = error.name === 'TimeoutError' ? 'timed out' : error.name;
+      const failure = describeFailure(error);
+      // A name that does not resolve will not resolve on the second try
+      // either, and neither will a refused connection. Retrying a permanent
+      // failure three times with backoff turns an instant answer into eight
+      // seconds — which, multiplied by the sources behind one question, is
+      // how a research step grows past a serverless request's whole budget.
+      if (failure.permanent) return { status: 'failed', url, reason: failure.reason };
+      reason = failure.reason;
     }
   }
   return { status: 'failed', url, reason };
+}
+
+/** Why a fetch threw, and whether trying again could possibly help. */
+export function describeFailure(error) {
+  if (error?.name === 'TimeoutError') return { reason: 'timed out', permanent: false };
+  if (error?.name === 'AbortError') return { reason: 'gave up waiting', permanent: false };
+
+  // Node puts the real reason on the cause; the error itself is only ever
+  // "fetch failed", which tells nobody anything.
+  const code = error?.cause?.code ?? error?.code;
+  const permanent = {
+    ENOTFOUND: 'no such host',
+    EAI_AGAIN: 'the host could not be looked up',
+    ECONNREFUSED: 'the connection was refused',
+    ERR_TLS_CERT_ALTNAME_INVALID: 'the certificate is for a different host',
+    DEPTH_ZERO_SELF_SIGNED_CERT: 'the certificate is not trusted',
+    UNABLE_TO_VERIFY_LEAF_SIGNATURE: 'the certificate is not trusted',
+    CERT_HAS_EXPIRED: 'the certificate has expired',
+  }[code];
+  if (permanent) return { reason: permanent, permanent: true };
+
+  return { reason: code ?? error?.name ?? 'unknown', permanent: false };
 }
 
 /**

@@ -62,6 +62,11 @@ export class NeonStore {
     return saved;
   }
 
+  async remove(domain) {
+    const rows = await this.sql('delete from companies where domain = $1 returning domain', [domain]);
+    return rows.length > 0;
+  }
+
   /** Used by the health check: proves the database is reachable and has the table. */
   async count() {
     const rows = await this.sql('select count(*)::int as n from companies');

@@ -412,3 +412,85 @@ export function drawPath(path, { duration = 620, delay = 0 } = {}) {
   // Never leave a line half-drawn if the observer does not fire.
   setTimeout(() => { observer.disconnect(); path.style.strokeDashoffset = '0'; }, duration + delay + 2000);
 }
+
+/**
+ * One scroll driver for the whole page.
+ *
+ * Every scroll-linked effect reads from this, because a page with four
+ * separate scroll listeners does four times the work for one gesture. It is
+ * passive and throttled to a frame, so it can never hold up the scroll
+ * itself — the thing that makes parallax feel broken when it is done badly.
+ */
+export function onScroll(handler) {
+  if (reducedMotion()) return () => {};
+
+  let frame = null;
+  const run = () => {
+    frame = null;
+    handler(window.scrollY);
+  };
+  const schedule = () => {
+    if (frame === null) frame = requestAnimationFrame(run);
+  };
+
+  window.addEventListener('scroll', schedule, { passive: true });
+  run();
+  return () => {
+    window.removeEventListener('scroll', schedule);
+    if (frame !== null) cancelAnimationFrame(frame);
+  };
+}
+
+/**
+ * Parallax: layers that move at different rates as the page scrolls, which
+ * is what reads as depth.
+ *
+ * The rates are small. At the depth a marketing page uses, the background
+ * slides visibly behind text you are trying to read, and this is a page
+ * people read.
+ */
+export function parallax(layers) {
+  return onScroll((y) => {
+    for (const { node, rate } of layers) {
+      node.style.transform = `translate3d(0, ${(y * rate).toFixed(1)}px, 0)`;
+    }
+  });
+}
+
+/**
+ * A marquee that loops on its own and is also nudged along by scrolling —
+ * Kivo's two horizontal techniques on one strip of real content.
+ *
+ * The children are duplicated once so the loop has somewhere to come back
+ * from. It pauses on hover so you can read it, and when it scrolls out of
+ * view so it is not animating off-screen.
+ */
+export function marquee(track, { scrollRate = 0.12 } = {}) {
+  const items = [...track.children];
+  if (!items.length || reducedMotion()) return () => {};
+
+  // The copy is for the eye only; a screen reader should read the list once.
+  for (const item of items) {
+    const copy = item.cloneNode(true);
+    copy.setAttribute('aria-hidden', 'true');
+    track.append(copy);
+  }
+  track.classList.add('rolling');
+
+  let visible = true;
+  const watcher = new IntersectionObserver(([entry]) => {
+    visible = entry.isIntersecting;
+    track.style.animationPlayState = visible ? '' : 'paused';
+  });
+  watcher.observe(track);
+
+  const stop = onScroll((y) => {
+    if (!visible) return;
+    track.style.setProperty('--nudge', `${(-y * scrollRate).toFixed(1)}px`);
+  });
+
+  return () => {
+    stop();
+    watcher.disconnect();
+  };
+}

@@ -38,6 +38,10 @@ export class MemoryStore {
   async count() {
     return this.rows.size;
   }
+
+  async remove(domain) {
+    return this.rows.delete(domain);
+  }
 }
 
 export class JsonStore {
@@ -93,6 +97,14 @@ export class JsonStore {
 
   async count() {
     return Object.keys(this.#read()).length;
+  }
+
+  async remove(domain) {
+    const all = this.#read();
+    if (!Object.hasOwn(all, domain)) return false;
+    delete all[domain];
+    this.#write(all);
+    return true;
   }
 }
 

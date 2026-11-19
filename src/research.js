@@ -47,10 +47,14 @@ export class Researcher {
   /** @type {Function} */ fetchPage;
   /** @type {Function} */ resolveRedirect;
   /** @type {number} */ budget;
+  /** @type {number} */ stepBudgetMs;
 
-  /** @param {{ profile: any, llm: any, store: any, fetchPage?: Function, resolveRedirect?: Function, budget?: number }} options */
-  constructor({ profile, llm, store, fetchPage = politeFetch, resolveRedirect = realResolveRedirect, budget = 40 }) {
-    Object.assign(this, { profile, llm, store, fetchPage, resolveRedirect, budget });
+  /**
+   * @param {{ profile: any, llm: any, store: any, fetchPage?: Function,
+   *   resolveRedirect?: Function, budget?: number, stepBudgetMs?: number }} options
+   */
+  constructor({ profile, llm, store, fetchPage = politeFetch, resolveRedirect = realResolveRedirect, budget = 40, stepBudgetMs = 45000 }) {
+    Object.assign(this, { profile, llm, store, fetchPage, resolveRedirect, budget, stepBudgetMs });
   }
 
   #prompt(company, q, text) {
@@ -89,15 +93,24 @@ export class Researcher {
    * it, because "we found nothing" is only trustworthy if you can see where
    * we looked.
    */
-  async answerQuestion(company, q, sources) {
+  async answerQuestion(company, q, sources, { deadline = Infinity, now = () => Date.now() } = {}) {
     const log = [];
     let anyPageLoaded = false;
     let anyPageFailed = false;
     let ranOutOfBudget = false;
+    let ranOutOfTime = false;
 
     for (const spec of q.sources) {
       if (sources.exhausted) {
         ranOutOfBudget = true;
+        break;
+      }
+      // A slow site must not be able to push one question past the time a
+      // single request is allowed to take. Stopping here costs the sources
+      // we had not reached yet; the next request picks the question up again.
+      if (now() > deadline) {
+        ranOutOfTime = true;
+        log.push({ source: 'the clock', outcome: 'ran out of time for this question' });
         break;
       }
 
@@ -157,8 +170,9 @@ export class Researcher {
       };
     }
 
-    // Silence is only an answer if the pages we meant to read actually loaded.
-    if (q.absenceAnswer && anyPageLoaded && !anyPageFailed && !ranOutOfBudget) {
+    // Silence is only an answer if the pages we meant to read actually
+    // loaded — and if we got all the way through the list.
+    if (q.absenceAnswer && anyPageLoaded && !anyPageFailed && !ranOutOfBudget && !ranOutOfTime) {
       return {
         key: q.key,
         label: q.label,
@@ -169,7 +183,7 @@ export class Researcher {
       };
     }
 
-    return { key: q.key, label: q.label, answer: 'unknown', value: null, evidence: null, log };
+    return { key: q.key, label: q.label, answer: 'unknown', value: null, evidence: null, log, ranOutOfTime };
   }
 
   /**
@@ -187,10 +201,43 @@ export class Researcher {
     const { answers = {}, details = {}, lookups = 0, msSpent = 0 } = progress ?? {};
     const set = sources ?? new SourceSet({ company, llm: this.llm, fetchPage: this.fetchPage, budget: this.budget, used: lookups });
 
+    const { stalled = {} } = progress ?? {};
     const question = nextQuestion(this.profile, answers);
+
     if (question) {
       onProgress(`${company.domain}: ${question.label}`);
-      const detail = await this.answerQuestion(company, question, set);
+      const detail = await this.answerQuestion(company, question, set, { deadline: startedAt + this.stepBudgetMs, now });
+
+      if (detail.ranOutOfTime) {
+        // Running out of time is a fact about this request, not about the
+        // company. Recording "unknown" would make it a verdict — the profile
+        // rejects on unknown — so the question keeps its place and the next
+        // request has another go at it.
+        stalled[question.key] = (stalled[question.key] ?? 0) + 1;
+        details[question.key] = detail;
+
+        if (stalled[question.key] < 3) {
+          return this.store.put({
+            ...rest,
+            status: 'researching',
+            progress: { answers, details, lookups: set.used, msSpent: msSpent + (now() - startedAt), stalled },
+          });
+        }
+
+        // Three goes and still not through: something about this company's
+        // sources is too slow to finish, which is a person's problem now.
+        return this.store.put({
+          ...rest,
+          status: 'manual_review',
+          progress: { answers, details, lookups: set.used, msSpent: msSpent + (now() - startedAt), stalled },
+          handoff: {
+            reason: `"${question.label}" could not be answered in time after ${stalled[question.key]} attempts. Its sources are too slow.`,
+            unanswered: this.profile.qualifiers.filter((q) => answers[q.key] === undefined).map((q) => q.label),
+            at: new Date().toISOString(),
+          },
+        });
+      }
+
       details[question.key] = detail;
       answers[question.key] = detail.answer;
     }
@@ -205,7 +252,7 @@ export class Researcher {
       return this.store.put({
         ...rest,
         status: 'manual_review',
-        progress: { answers, details, lookups: set.used, msSpent: spent },
+        progress: { answers, details, lookups: set.used, msSpent: spent, stalled },
         handoff: {
           reason: `Ran out of lookups (${set.used}) with "${remaining.label}" still unanswered.`,
           unanswered: this.profile.qualifiers.filter((q) => answers[q.key] === undefined).map((q) => q.label),
@@ -215,7 +262,7 @@ export class Researcher {
     }
 
     if (remaining) {
-      return this.store.put({ ...rest, status: 'researching', progress: { answers, details, lookups: set.used, msSpent: spent } });
+      return this.store.put({ ...rest, status: 'researching', progress: { answers, details, lookups: set.used, msSpent: spent, stalled } });
     }
 
     return this.store.put({

@@ -61,6 +61,10 @@ not go in.
 | Analytics tiles counting up | The metrics strip | the real figure is written first, then counted up to; it is in the DOM from the start |
 | Interactive light | A soft light follows the pointer across a card | one radial gradient, two custom properties |
 
+| Parallax | The hero's wash, dot field and orb move at different rates on scroll | one shared scroll driver, passive and frame-throttled |
+| Infinite marquee | **The checks ticker** — what every company is measured against | `/api/state` sends the profile's real qualifier labels; the duplicate copies are `aria-hidden`, so it is read once |
+| Horizontal scroll | The same ticker is nudged along by vertical scrolling | the same scroll driver |
+
 ## What was left out, and why
 
 Kivo is a 25,703px marketing page whose job is to hold a stranger's attention.
@@ -68,13 +72,18 @@ This is a tool someone has open while deciding whether to email a company.
 Those are opposite jobs, and some of its best effects would be actively bad
 here:
 
-- **Parallax scrolling** and **scroll-pinned scenes** — they make a page longer
-  to read on purpose. A review queue should be shorter.
-- **Horizontal scroll sections** — they hide things behind a gesture. Nothing
-  waiting for your decision should be hidden behind a gesture.
-- **Infinite marquees** — permanent movement next to text you are reading.
+- **Scroll-pinned scenes** — they make a page longer to read on purpose. A
+  review queue should be shorter.
 - **A full-screen WebGL veil between pages** — half a second of nothing, every
   time you switch tabs, on a page you switch tabs on constantly.
+
+Parallax, the marquee and scroll-linked horizontal motion were on this list
+too, and were asked for anyway. They went in under the same rule as
+everything else: the parallax rates are a third of what a marketing page
+uses, because the background has to sit still enough to read over, and the
+marquee carries the profile's own qualifiers rather than looping for its own
+sake. The marquee pauses on hover so you can read it, and when it scrolls out
+of view so it is not animating off-screen.
 - **Lottie / GSAP / Framer Motion** — three dependencies and a build step for
   effects that Kivo itself does without.
 

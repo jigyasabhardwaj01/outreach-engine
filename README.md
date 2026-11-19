@@ -80,6 +80,7 @@ node cli.js doctor
 | `node cli.js verify` | Runs the whole pipeline against a stand-in web and model, and says which steps work. No keys, no network, no cost |
 | `node cli.js review` | The review page at localhost:3000 — the normal way to use this |
 | `node cli.js discover 10` | Fill the shortlist from the profile's searches |
+| `node cli.js add acme.com` | Shortlist a company you already know (the page has a box for this too) |
 | `node cli.js add acme.com` | Shortlist companies you already know |
 | `node cli.js research` | Research everything shortlisted, to the end |
 | `node cli.js doctor` | Check the settings, the keys and the model |

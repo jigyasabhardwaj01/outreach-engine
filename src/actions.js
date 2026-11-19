@@ -1,6 +1,6 @@
 // Everything the review page (or the CLI) can ask for. One place, so the two
 // front ends can never drift apart on what an action actually does.
-import { discover, addDomains } from './discover.js';
+import { discover, addDomains, discoverStep, lookupCompany } from './discover.js';
 import { Researcher } from './research.js';
 import { findContact, manualContact } from './contacts.js';
 import { draftEmail } from './draft.js';
@@ -30,8 +30,30 @@ export function createActions({ profile, llm, store, settings, researcher = new 
       return { added: added.length };
     },
 
+    /**
+     * One model call's worth of discovery, plus the cursor for the next.
+     *
+     * The page calls this in a loop. A whole sweep is six calls, several of
+     * them grounded web searches, which is minutes of work — far past what a
+     * serverless request is allowed, and the reason the one-shot version
+     * returned a 504 with nothing to show for it.
+     */
+    discoverStep: async ({ cursor = {}, limit = 10 } = {}) =>
+      discoverStep({ profile, llm, store, cursor, limit: Math.min(Number(limit) || 10, 50) }),
+
     /** Shortlist domains you already know you want. */
     add: async ({ domains = [] }) => ({ added: (await addDomains({ profile, store, domains })).length }),
+
+    /** Find one company by name, or add it straight away if given a domain. */
+    lookup: async ({ query }) => lookupCompany({ profile, llm, store, query }),
+
+    /** Take a company off the list entirely, rather than ruling it out. */
+    forget: async ({ domain }) => {
+      await load(domain);
+      if (!store.remove) throw new Error('This store cannot remove companies.');
+      await store.remove(domain);
+      return { removed: domain };
+    },
 
     /**
      * Answer exactly one question. The page calls this in a loop, so no single

@@ -104,6 +104,10 @@ export function createApi({ actions, store, settings, profile = null, now = () =
         // How many questions a company has to answer. The page shows progress
         // as a fraction of this rather than inventing a scale of its own.
         questions: profile?.qualifiers?.length ?? 0,
+        // And what they are. The page says out loud what every company is
+        // checked against, which is the one thing a newcomer most wants to
+        // know and the campaign's own words rather than anything invented.
+        checks: (profile?.qualifiers ?? []).map((q) => q.label),
       });
     },
 
