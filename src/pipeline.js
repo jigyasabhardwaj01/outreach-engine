@@ -25,7 +25,7 @@ export async function runPipeline({
   settings,
   researcher = new Researcher({ profile, llm, store }),
   autoSend = String(settings?.REVIEW_MODE ?? 'true').toLowerCase() === 'false',
-  onProgress = () => {},
+  onProgress = (/** @type {string} */ _message) => {},
   transport = {},
   contactFetch = fetch,
 }) {
@@ -86,7 +86,7 @@ export async function runPipeline({
 
       await sendEmail(approve(company), { store, settings, ...transport });
       summary.sent++;
-      onProgress(`${label}: sent to ${settings.EMAIL_TO}`);
+      onProgress(`${label}: sent to ${settings?.EMAIL_TO ?? 'your own address'}`);
     } catch (error) {
       // Degrade gracefully: record which step broke and carry on.
       summary.failures.push({ domain, step: 'run', reason: error.message });

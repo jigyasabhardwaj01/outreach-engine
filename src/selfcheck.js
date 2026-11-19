@@ -77,11 +77,13 @@ const hunterStub = async () => ({
  * Run the pipeline end to end against stand-ins and report on each step.
  * Returns { steps: [{ step, name, ok, detail }], ok }.
  */
+/** @param {{ profile?: any, settings?: import('./env.js').Settings }} options */
 export async function selfCheck({ profile, settings = {} } = {}) {
   const store = new MemoryStore();
   const steps = [];
   const add = (step, name, ok, detail, kind = 'pipeline') => steps.push({ step, name, ok, detail, kind });
 
+  /** @type {any} */
   let sent = null;
   const summary = await runPipeline({
     domains: ['selfcheck.example'],
@@ -91,12 +93,12 @@ export async function selfCheck({ profile, settings = {} } = {}) {
     settings: { ...settings, REVIEW_MODE: 'false', EMAIL_TO: 'you@example.com', HUNTER_API_KEY: 'stub', MAILER: 'resend', RESEND_API_KEY: 'stub' },
     // The real researcher, pointed at a stand-in web rather than the network.
     researcher: new Researcher({ profile, llm: fakeLlm, store, fetchPage: fakeWeb, resolveRedirect: async (u) => u }),
-    contactFetch: hunterStub,
+    contactFetch: /** @type {any} */ (hunterStub),
     transport: {
-      fetchImpl: async (url, options) => {
+      fetchImpl: /** @type {any} */ (async (url, options) => {
         sent = JSON.parse(options.body);
         return { ok: true, json: async () => ({ id: 'selfcheck' }) };
-      },
+      }),
     },
   });
 
@@ -120,7 +122,7 @@ export async function selfCheck({ profile, settings = {} } = {}) {
     Boolean(company?.email) && company.email.issues.length === 0 && company.email.body.includes(company.contact.firstName),
     company?.email?.issues?.length ? `rejected by its own checks: ${company.email.issues[0]}` : 'passed every draft check',
   );
-  add(7, 'Send to your own address', summary.sent === 1 && sent?.to?.[0] === 'you@example.com', sent ? `to ${sent.to.join(', ')}` : 'nothing sent');
+  add(7, 'Send to your own address', summary.sent === 1 && sent?.to?.[0] === 'you@example.com', sent?.to ? `to ${sent.to.join(', ')}` : 'nothing sent');
 
   // Two promises that are easy to break and expensive to break quietly.
   add('a', 'Mail goes only to EMAIL_TO', !JSON.stringify(sent ?? {}).includes('ada@selfcheck.example'), 'the contact address appears nowhere in the message');
@@ -150,6 +152,7 @@ export async function selfCheck({ profile, settings = {} } = {}) {
  * This is what to run the moment a key is added — a key that is present but
  * wrong looks exactly like a key that is absent until something tries it.
  */
+/** @param {{ settings?: import('./env.js').Settings, fetchImpl?: Function, connectImpl?: Function }} options */
 export async function liveCheck({ settings = {}, fetchImpl = fetch, connectImpl } = {}) {
   const steps = [];
   const add = (name, ok, detail) => steps.push({ name, ok, detail });

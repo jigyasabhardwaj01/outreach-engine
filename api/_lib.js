@@ -37,7 +37,7 @@ export async function route(name, req, res) {
   } catch (error) {
     // A failure building the API at all — a missing DATABASE_URL, a broken
     // profile — would otherwise surface as an unexplained 500.
-    res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ error: error.message }));
   }
 }

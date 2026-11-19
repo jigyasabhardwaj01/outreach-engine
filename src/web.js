@@ -1,5 +1,6 @@
 // Reading public web pages. Everything here returns data for a model to read,
 // never instructions to follow: callers wrap it in <untrusted_content> tags.
+import dns from 'node:dns/promises';
 
 const DOMAIN = /^(?!-)[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/;
 const PRIVATE_HOST = /\.(localhost|test|local|internal|invalid)$/;
@@ -28,6 +29,54 @@ export function isPublicUrl(input) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Is this address inside the machine, the network, or the cloud provider?
+ *
+ * The ranges that matter: loopback, the RFC 1918 private blocks, link-local
+ * (which is where 169.254.169.254, every cloud's credential endpoint, lives),
+ * carrier-grade NAT, and the IPv6 equivalents.
+ */
+export function isPrivateAddress(ip) {
+  const address = String(ip ?? '').toLowerCase().replace(/^::ffff:/, '');
+
+  if (address.includes(':')) {
+    return address === '::' || address === '::1' || /^f[cd]/.test(address) || address.startsWith('fe80');
+  }
+
+  const [a, b] = address.split('.').map(Number);
+  if (!Number.isInteger(a) || !Number.isInteger(b)) return true;
+  return (
+    a === 0 || a === 10 || a === 127 || a >= 224 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
+}
+
+/**
+ * The check isPublicUrl cannot make.
+ *
+ * A name can look perfectly public and still resolve to something inside the
+ * network — by accident, or because a page we read linked to a host its owner
+ * pointed at 169.254.169.254 on purpose. The name is the only thing we can
+ * check before connecting, so we check where it actually points.
+ *
+ * A name that will not resolve is left alone: the fetch below will fail on its
+ * own, and refusing here would turn "DNS was slow" into "this site blocked us".
+ */
+/** @param {string} hostname @param {Function} [lookup] */
+export async function resolvesPublicly(hostname, lookup = dns.lookup) {
+  let addresses;
+  try {
+    addresses = await lookup(hostname, { all: true });
+  } catch {
+    return true;
+  }
+  if (!addresses?.length) return true;
+  return !addresses.some((entry) => isPrivateAddress(entry.address));
 }
 
 const ENTITIES = {
@@ -94,8 +143,15 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
  *
  * The difference matters: only 'missing' lets a caller conclude anything from absence.
  */
-export async function fetchPage(url, { attempts = 3, timeoutMs = 20000, maxChars = 30000 } = {}) {
+/**
+ * @param {string} url
+ * @param {{ attempts?: number, timeoutMs?: number, maxChars?: number, lookup?: Function }} options
+ */
+export async function fetchPage(url, { attempts = 3, timeoutMs = 20000, maxChars = 30000, lookup } = {}) {
   if (!isPublicUrl(url)) return { status: 'failed', url, reason: 'not a public web address' };
+  if (!(await resolvesPublicly(new URL(url).hostname, lookup))) {
+    return { status: 'failed', url, reason: 'resolves to a private address' };
+  }
 
   let reason = 'unknown';
   for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -142,20 +198,30 @@ export async function fetchPage(url, { attempts = 3, timeoutMs = 20000, maxChars
  * A disallowed page comes back as 'failed', not 'missing', because we did not
  * look — and absence of evidence must never be read from a page we never read.
  */
-export function createPoliteFetcher({ robots, minGapMs = 1000, fetchPage: inner = fetchPage, sleepImpl = sleep } = {}) {
+/** @param {{ robots?: any, minGapMs?: number, maxGapMs?: number, fetchPage?: Function, sleepImpl?: Function }} options */
+export function createPoliteFetcher({ robots, minGapMs = 1000, maxGapMs = 10000, fetchPage: inner = fetchPage, sleepImpl = sleep } = {}) {
   const lastByHost = new Map();
+  const gapByHost = new Map();
 
   return async function politeFetch(url, options) {
     if (!isPublicUrl(url)) return { status: 'failed', url, reason: 'not a public web address' };
 
+    const { host } = new URL(url);
+
     if (robots) {
       const verdict = await robots.check(url);
       if (!verdict.allowed) return { status: 'failed', url, reason: `robots.txt disallows it (${verdict.rule})` };
-      if (verdict.crawlDelay) minGapMs = Math.max(minGapMs, verdict.crawlDelay * 1000);
+      // A Crawl-delay belongs to the host that asked for it. Raising the gap
+      // globally would let one site with "Crawl-delay: 30" slow every other
+      // site down for the rest of the run — and quietly blow the two-minute
+      // target for companies that never asked for anything.
+      if (verdict.crawlDelay) {
+        gapByHost.set(host, Math.min(Math.max(minGapMs, verdict.crawlDelay * 1000), maxGapMs));
+      }
     }
 
-    const { host } = new URL(url);
-    const wait = (lastByHost.get(host) ?? 0) + minGapMs - Date.now();
+    const gap = gapByHost.get(host) ?? minGapMs;
+    const wait = (lastByHost.get(host) ?? 0) + gap - Date.now();
     if (wait > 0) await sleepImpl(wait);
     lastByHost.set(host, Date.now());
 
@@ -164,9 +230,13 @@ export function createPoliteFetcher({ robots, minGapMs = 1000, fetchPage: inner 
 }
 
 // Search results link through a redirect; follow one hop to the real address.
+//
+// The URL here comes from the model's grounding data, so it is checked like
+// anything else off the web before we are willing to open a connection to it.
 export async function resolveRedirect(url) {
+  if (!isPublicUrl(url)) return url;
   try {
-    const res = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(8000) });
+    const res = await fetch(url, { redirect: 'manual', headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });
     const location = res.headers.get('location');
     return location && isPublicUrl(location) ? location : url;
   } catch {

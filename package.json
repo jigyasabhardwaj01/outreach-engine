@@ -8,7 +8,15 @@
     "node": ">=20"
   },
   "scripts": {
+    "start": "node cli.js review",
     "test": "node --test \"test/*.test.js\"",
+    "typecheck": "tsc -p jsconfig.json",
+    "verify": "node cli.js verify",
+    "check": "npm run typecheck && npm test && npm run verify",
     "doctor": "node cli.js doctor"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "typescript": "^5.6.3"
   }
 }

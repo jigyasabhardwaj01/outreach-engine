@@ -35,13 +35,28 @@ export function createApi({ actions, store, settings, now = () => Date.now() }) 
     /** Is this deployment actually wired up? Safe to call signed out. */
     async health() {
       const open = isOpen(settings);
-      const access = settings.APP_PASSWORD ? (open ? 'public to read, password to act' : 'password') : open ? 'open to anyone' : 'closed';
+      // Hosted and local are different deployments with different rules, and
+      // health has to answer for the one it is running in. On your own
+      // machine the server binds to localhost and the file store works, so
+      // neither a password nor a database is missing — saying they are makes
+      // a working install look broken.
+      const hosted = Boolean(settings.VERCEL);
+      const access = settings.APP_PASSWORD
+        ? open
+          ? 'public to read, password to act'
+          : 'password'
+        : open
+          ? 'open to anyone'
+          : hosted
+            ? 'closed'
+            : 'local, on this machine only';
 
-      const missing = ['DATABASE_URL', 'GEMINI_API_KEY', 'EMAIL_TO'].filter((name) => !settings[name]);
-      // Absent on purpose is not the same as missing, but with neither a
-      // password nor an explicit opt-in the site cannot serve anybody.
+      const needed = ['GEMINI_API_KEY', 'EMAIL_TO', ...(hosted ? ['DATABASE_URL'] : [])];
+      const missing = needed.filter((name) => !settings[name]);
+      // Absent on purpose is not the same as missing, but a hosted copy with
+      // neither a password nor an explicit opt-in cannot serve anybody.
       if (access === 'closed') missing.push('APP_PASSWORD');
-      let database = 'not configured';
+      let database = hosted ? 'not configured' : 'local file store';
       if (settings.DATABASE_URL) {
         try {
           database = `ok, ${await store.count()} companies`;

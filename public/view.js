@@ -130,7 +130,13 @@ export function statusChips(state = {}, live = null) {
   if (model && !model.ok) chips.push({ text: 'model unavailable', tone: 'bad', title: model.detail });
 
   const hunter = step('Hunter');
-  if (hunter) chips.push({ text: hunter.ok ? hunter.detail.replace(' this month', '') : 'Hunter key rejected', tone: hunter.ok ? '' : 'bad', title: hunter.detail });
+  // A step always carries a detail — but the header is the first thing drawn,
+  // and a missing field here would take the whole page down with it rather
+  // than one chip.
+  if (hunter) {
+    const detail = hunter.detail ?? '';
+    chips.push({ text: hunter.ok ? detail.replace(' this month', '') || 'Hunter ready' : 'Hunter key rejected', tone: hunter.ok ? '' : 'bad', title: detail });
+  }
 
   chips.push(state.emailTo ? { text: `sends to ${state.emailTo}` } : { text: 'EMAIL_TO not set', tone: 'warn' });
 
@@ -194,6 +200,29 @@ export function researchQueueLine(companies, limit = 8) {
   const shown = waiting.slice(0, limit).join(', ');
   const rest = waiting.length - limit;
   return `${waiting.length} waiting for research: ${shown}${rest > 0 ? ` and ${rest} more` : ''}`;
+}
+
+/**
+ * What to say after a research run that did not go cleanly.
+ *
+ * The run keeps going when one company fails, so the end of it has to account
+ * for every company rather than reporting the last thing that happened. A run
+ * that says "Done." while three companies quietly failed is worse than one
+ * that says nothing.
+ */
+export function runSummary({ total, failed = [], stopped = false }) {
+  if (!total) return { text: 'Nothing to research.', tone: '' };
+
+  const done = total - failed.length;
+  const ending = stopped ? 'Stopped' : 'Finished';
+  if (!failed.length) return { text: `${ending}: ${done} of ${total} researched.`, tone: stopped ? '' : 'ok' };
+
+  const names = failed.slice(0, 3).map((f) => f.domain).join(', ');
+  const more = failed.length > 3 ? ` and ${failed.length - 3} more` : '';
+  return {
+    text: `${ending}: ${done} of ${total} researched. Failed: ${names}${more} — ${failed[0].reason}`,
+    tone: done ? 'warn' : 'bad',
+  };
 }
 
 export const companiesIn = (companies, stageId) => Object.values(companies ?? {}).filter(stageById(stageId).has);

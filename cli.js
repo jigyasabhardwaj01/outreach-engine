@@ -66,8 +66,17 @@ const commands = {
     if (!waiting.length) return say('Nothing is waiting to be researched.');
 
     for (const company of waiting) {
-      const done = await researcher.run(company, say);
-      say(`${done.domain}: ${done.verdict.kind} (${done.verdict.code}) after ${done.lookups} lookups`);
+      try {
+        const done = await researcher.run(company, say);
+        // A company can finish without a verdict: running out of lookups is a
+        // handoff, not a decision, and it has no verdict to print.
+        if (done.status === 'manual_review') say(`${done.domain}: handed back — ${done.handoff?.reason ?? 'stopped early'}`);
+        else if (done.verdict) say(`${done.domain}: ${done.verdict.kind} (${done.verdict.code}) after ${done.lookups} lookups`);
+        else say(`${done.domain}: finished as "${done.status}" with no verdict`);
+      } catch (error) {
+        // One company's failure is not a reason to abandon the rest of the queue.
+        say(`${company.domain}: failed — ${error.message}`);
+      }
     }
   },
 
@@ -127,12 +136,17 @@ const commands = {
     say(`Companies stored: ${Object.keys(await store.all()).length}`);
 
     if (env.GEMINI_API_KEY) {
-      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=100', {
-        headers: { 'x-goog-api-key': env.GEMINI_API_KEY },
-      }).catch((error) => ({ ok: false, status: error.name }));
-      const body = res.ok ? await res.json() : {};
-      const usable = (body.models ?? []).filter((model) => (model.supportedGenerationMethods ?? []).includes('generateContent'));
-      say(`Gemini: HTTP ${res.status}${usable.length ? `, ${env.GEMINI_MODEL} ${usable.some((m) => m.name.endsWith(env.GEMINI_MODEL)) ? 'is available' : 'was NOT in the list'}` : ''}`);
+      try {
+        const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=100', {
+          headers: { 'x-goog-api-key': env.GEMINI_API_KEY },
+        });
+        const body = res.ok ? await res.json() : {};
+        const usable = (body.models ?? []).filter((model) => (model.supportedGenerationMethods ?? []).includes('generateContent'));
+        say(`Gemini: HTTP ${res.status}${usable.length ? `, ${env.GEMINI_MODEL} ${usable.some((m) => m.name.endsWith(env.GEMINI_MODEL)) ? 'is available' : 'was NOT in the list'}` : ''}`);
+      } catch (error) {
+        // "HTTP TypeError" told you nothing; this says the call never landed.
+        say(`Gemini: could not be reached (${error.name}: ${error.message})`);
+      }
     }
   },
 };

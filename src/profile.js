@@ -93,7 +93,7 @@ export function outcomeOf(q, answer) {
 }
 
 export function defineProfile(spec) {
-  const { seller, qualifiers = [], discovery = [], contacts, excludeDomains = [], defaultVerdict } = spec;
+  const { seller, qualifiers = [], discovery = [], excludeDomains = [], defaultVerdict } = spec;
 
   if (!seller?.product || !seller?.oneLiner) throw new Error('A profile needs seller.product and seller.oneLiner.');
   if (!qualifiers.length) throw new Error('A profile needs at least one qualifier.');

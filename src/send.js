@@ -5,6 +5,10 @@
 import { env } from './env.js';
 import { deliver, mailerFor } from './mailer.js';
 
+/**
+ * @param {any} company
+ * @param {{ store?: any, settings?: import('./env.js').Settings, fetchImpl?: Function, connectImpl?: Function }} options
+ */
 export async function sendEmail(company, { store, settings = env, ...transport } = {}) {
   const to = settings.EMAIL_TO?.trim().toLowerCase();
   if (!to) throw new Error('EMAIL_TO is not set. Nothing was sent.');

@@ -41,6 +41,14 @@ function schemaFor(q) {
 }
 
 export class Researcher {
+  /** @type {any} */ profile;
+  /** @type {any} */ llm;
+  /** @type {any} */ store;
+  /** @type {Function} */ fetchPage;
+  /** @type {Function} */ resolveRedirect;
+  /** @type {number} */ budget;
+
+  /** @param {{ profile: any, llm: any, store: any, fetchPage?: Function, resolveRedirect?: Function, budget?: number }} options */
   constructor({ profile, llm, store, fetchPage = politeFetch, resolveRedirect = realResolveRedirect, budget = 40 }) {
     Object.assign(this, { profile, llm, store, fetchPage, resolveRedirect, budget });
   }
@@ -169,7 +177,11 @@ export class Researcher {
    * enough to be cut off, and so an interrupted company resumes where it
    * stopped instead of starting over.
    */
-  async step(company, { onProgress = () => {}, sources, now = () => Date.now() } = {}) {
+  /**
+   * @param {any} company
+   * @param {{ onProgress?: Function, sources?: any, now?: () => number }} options
+   */
+  async step(company, { onProgress = (/** @type {string} */ _message) => {}, sources, now = () => Date.now() } = {}) {
     const startedAt = now();
     const { progress, ...rest } = company;
     const { answers = {}, details = {}, lookups = 0, msSpent = 0 } = progress ?? {};
@@ -219,7 +231,7 @@ export class Researcher {
   }
 
   /** Every question, to the end. The sources are shared across the whole run. */
-  async run(company, onProgress = () => {}) {
+  async run(company, onProgress = (/** @type {string} */ _message) => {}) {
     let current = company;
     const sources = new SourceSet({
       company,

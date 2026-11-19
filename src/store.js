@@ -22,6 +22,10 @@ export class MemoryStore {
   }
 
   async put(company) {
+    // The same rule as the other two stores. A test double that accepts what
+    // production refuses is a test double that hides the bug it was meant
+    // to catch.
+    if (!company?.domain) throw new Error('A company needs a domain.');
     const saved = stamp(company);
     this.rows.set(saved.domain, saved);
     return saved;
@@ -29,6 +33,10 @@ export class MemoryStore {
 
   async has(domain) {
     return this.rows.has(domain);
+  }
+
+  async count() {
+    return this.rows.size;
   }
 }
 
@@ -81,6 +89,10 @@ export class JsonStore {
 
   async has(domain) {
     return Object.hasOwn(this.#read(), domain);
+  }
+
+  async count() {
+    return Object.keys(this.#read()).length;
   }
 }
 

@@ -39,8 +39,24 @@ goes wrong:
 
 ```bash
 cp .env.example .env
-npm test
+npm run check
 ```
+
+`npm run check` is the gate: a type check, the test suite, and a full run of
+the pipeline against a stand-in web and model. It needs no API keys, touches
+no network and costs nothing, so it is safe to run anywhere and on every
+change.
+
+| | |
+|---|---|
+| `npm test` | The test suite on its own |
+| `npm run typecheck` | Type checking of `src/`, `api/`, `public/`, `cli.js`, from the JSDoc in the code. Test doubles are deliberately partial, so `test/` is not checked |
+| `npm run verify` | The seven steps of the pipeline, end to end, against stand-ins |
+| `npm run doctor` | What is configured on this machine, and whether the keys answer |
+
+The two devDependencies are the type checker and Node's type definitions.
+Nothing the application runs on has a dependency: it is built on what is in
+Node itself.
 
 To see the review page without any API keys, load the demo companies first:
 

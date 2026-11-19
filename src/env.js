@@ -6,6 +6,15 @@ import { fileURLToPath } from 'node:url';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+/**
+ * Settings are read from a file and the platform's own variables, so their
+ * names are not known until they arrive. Declaring that here, once, is what
+ * lets the type checker be useful about everything else.
+ *
+ * @typedef {Record<string, string>} Settings
+ */
+
+/** @type {Settings} */
 const DEFAULTS = {
   GEMINI_MODEL: 'gemini-3.8-flash',
   GEMINI_MIN_GAP_MS: '1000',
@@ -52,17 +61,35 @@ const ALIASES = {
   POSTGRES_URL: 'DATABASE_URL',
 };
 
+/**
+ * The settings this project reads. Needed so that "found under another name"
+ * means a setting of ours spelled oddly — not every mixed-case variable the
+ * operating system happens to export, which is what gets reported otherwise.
+ */
+const KNOWN = new Set([
+  ...Object.values(ALIASES),
+  'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_MIN_GAP_MS', 'HUNTER_API_KEY',
+  'DATABASE_URL', 'EMAIL_TO', 'EMAIL_FROM', 'SENDER_NAME',
+  'MAILER', 'RESEND_API_KEY', 'GMAIL_USER', 'GMAIL_APP_PASSWORD', 'SMTP_HOST', 'SMTP_PORT',
+  'APP_PASSWORD', 'PUBLIC_ACCESS', 'PROFILE', 'REVIEW_MODE', 'PORT', 'DATA_DIR', 'VERCEL',
+]);
+
 export const canonicalName = (name) => {
   const upper = String(name).toUpperCase();
   return ALIASES[upper] ?? upper;
 };
 
+/** Is this one of ours, however it was spelled? */
+export const isKnownSetting = (name) => KNOWN.has(canonicalName(name));
+
 /** Which settings were found under a name other than their own. */
 export const aliasesUsed = [];
 
+/** @returns {Settings} */
 export function loadEnv({ root = ROOT, processEnv = process.env } = {}) {
   const file = path.join(root, '.env');
   const fromFile = fs.existsSync(file) ? parseEnvFile(fs.readFileSync(file, 'utf8')) : {};
+  /** @type {Settings} */
   const env = { ...DEFAULTS };
   const noted = [];
 
@@ -72,7 +99,10 @@ export function loadEnv({ root = ROOT, processEnv = process.env } = {}) {
     for (const [key, value] of Object.entries(source)) {
       if (value === '' || value === undefined) continue;
       const name = canonicalName(key);
-      if (name !== key) noted.push({ found: key, read_as: name });
+      // Only worth reporting for a setting of ours. Otherwise every
+      // mixed-case variable the shell exports turns up on the health page
+      // as something we had to guess at.
+      if (name !== key && KNOWN.has(name)) noted.push({ found: key, read_as: name });
       env[name] = value;
     }
     for (const [key, value] of Object.entries(source)) {

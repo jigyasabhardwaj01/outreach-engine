@@ -15,6 +15,13 @@ export class LlmUnusable extends LlmError {}
 const RETRYABLE = (status) => status === 429 || status >= 500;
 
 export class Gemini {
+  /** @type {string} */ apiKey;
+  /** @type {string} */ model;
+  /** @type {number} */ minGapMs;
+  /** @type {number} */ attempts;
+  /** @type {number} */ timeoutMs;
+  /** @type {typeof fetch} */ fetchImpl;
+
   constructor({
     apiKey = env.GEMINI_API_KEY,
     model = env.GEMINI_MODEL,
@@ -134,13 +141,25 @@ function groundingOf(candidate) {
   return { sources: chunks, citations };
 }
 
-// The source cited for the sentence a quote came from, or null if none was.
+/**
+ * The source cited for the sentence a quote came from, or null if none was.
+ *
+ * Containment is checked both ways, because the model's own sentence and the
+ * quote it pulled out of it rarely line up exactly. But a very short cited
+ * fragment is contained in almost everything, and matching on one would staple
+ * a real URL to a claim that page never made — which is worse than having no
+ * URL at all. So the shorter side has to be long enough to mean something.
+ */
+const ENOUGH_TO_MATCH_ON = 12;
+
 export function citationFor(citations, quote) {
   const needle = squash(quote);
-  if (!needle) return null;
+  if (needle.length < ENOUGH_TO_MATCH_ON) return null;
+
   const hit = (citations ?? []).find((citation) => {
     const sentence = squash(citation.text);
-    return citation.uris.length && sentence && (sentence.includes(needle) || needle.includes(sentence));
+    if (!citation.uris.length || sentence.length < ENOUGH_TO_MATCH_ON) return false;
+    return sentence.includes(needle) || needle.includes(sentence);
   });
   return hit ? hit.uris[0] : null;
 }

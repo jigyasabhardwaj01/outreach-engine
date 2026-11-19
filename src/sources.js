@@ -10,6 +10,12 @@ import { LlmUnusable } from './llm.js';
 const NOTHING = 'NOTHING_FOUND';
 
 export class SourceSet {
+  /** @type {any} */ company;
+  /** @type {any} */ llm;
+  /** @type {Function} */ fetchPage;
+  /** @type {number} */ budget;
+
+  /** @param {{ company: any, llm: any, fetchPage?: Function, budget?: number, used?: number }} options */
   constructor({ company, llm, fetchPage = realFetchPage, budget = 40, used = 0 }) {
     Object.assign(this, { company, llm, fetchPage, budget });
     this.used = used;
@@ -20,8 +26,12 @@ export class SourceSet {
     return this.used >= this.budget;
   }
 
+  // The whole spec, not just its first query: two qualifiers that happen to
+  // open with the same search but fall back differently are not the same
+  // source, and sharing a cache entry would hand one of them the other's
+  // answer.
   #key(spec) {
-    return spec.type === 'page' ? `page:${spec.path}` : `search:${spec.queries[0]}`;
+    return spec.type === 'page' ? `page:${spec.path}` : `search:${spec.queries.join('|')}`;
   }
 
   /** The content for one source spec, fetched once per company. */
@@ -47,7 +57,9 @@ export class SourceSet {
     // The homepage is already cached by now in the common case.
     const home = await this.get({ type: 'page', path: '/', match: null });
     const link = (home.links ?? []).find((href) => spec.match.test(href) && isPublicUrl(href));
-    if (!link) return { kind: 'page', ...page };
+    // The budget is the promise that one company cannot eat the day's quota,
+    // so the second chance at finding a page has to respect it too.
+    if (!link || this.exhausted) return { kind: 'page', ...page };
 
     this.used++;
     return { kind: 'page', ...(await this.fetchPage(link)) };

@@ -2,12 +2,19 @@
 // there; this file only builds elements and talks to the API.
 import {
   STAGES, stageById, companiesIn, countsByStage, firstBusyStage, awaitingResearch,
-  PIPELINE, pipelineCounts, furthestStage, bannerFor, researchQueueLine,
+  PIPELINE, pipelineCounts, furthestStage, bannerFor, researchQueueLine, runSummary,
   metrics, formatDuration, asPercent, statusChips,
-  actionState, verdictWording, answerWording, evidenceWording, sourceLabel, wordCount, sendLabel, summaryLine, researchProgress,
+  actionState, verdictWording, answerWording, evidenceWording, wordCount, sendLabel, summaryLine, researchProgress,
 } from './view.js';
 
 const $ = (selector) => document.querySelector(selector);
+
+/**
+ * replaceChildren, but tolerant of the nulls that conditional children
+ * produce. Passed a null it would otherwise append the text "null" to the
+ * page, which is how an empty metrics strip ended up saying so out loud.
+ */
+const fill = (node, ...children) => node.replaceChildren(...children.flat().filter((child) => child != null && child !== false));
 
 function h(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -26,6 +33,11 @@ let state = { companies: {}, signedIn: false, needsPassword: false, ready: false
 let live = null;
 let stage = null;
 let busy = false;
+// Set by the Stop button. Research is a loop of separate requests, so stopping
+// is simply declining to start the next one — no request is ever abandoned
+// half-done, and the work already saved stays saved.
+let stopRequested = false;
+let canStop = false;
 
 // ---------------------------------------------------------------- talking to the API
 
@@ -71,18 +83,25 @@ async function askTheServices() {
 
 // Every button goes through here: one thing at a time, and the page always
 // re-reads the real state afterwards rather than guessing at it.
-async function run(message, work) {
+async function run(message, work, { stoppable = false } = {}) {
   if (busy) return;
   busy = true;
+  stopRequested = false;
+  canStop = stoppable;
   render();
   say(message + '…', 'working');
   try {
-    await work();
-    say('Done.', 'ok');
+    // Work that covers many companies reports on all of them; everything else
+    // either worked or threw.
+    const summary = await work();
+    if (summary?.text) say(summary.text, summary.tone);
+    else say(stopRequested ? 'Stopped.' : 'Done.', stopRequested ? '' : 'ok');
   } catch (error) {
     say(error.message, 'bad');
   } finally {
     busy = false;
+    canStop = false;
+    stopRequested = false;
     await load();
   }
 }
@@ -95,15 +114,29 @@ function say(message, tone = '') {
 
 // Research is asked for one question at a time: nothing runs long, and
 // stopping costs at most the question in flight.
+//
+// One company failing — a quota refusal, a site that will not load — must not
+// take the rest of the queue with it, the same way it does not in the CLI.
+// What failed is collected and reported at the end rather than thrown away.
 async function researchAll() {
   const waiting = companiesIn(state.companies, 'waiting');
+  const failed = [];
+
   for (const [index, company] of waiting.entries()) {
-    for (let step = 0; step < 60; step++) {
-      const result = await call('researchStep', { domain: company.domain });
-      if (result.done) break;
-      say(`${company.domain} — ${result.next ?? 'thinking'} (${index + 1} of ${waiting.length})`, 'working');
+    if (stopRequested) break;
+    try {
+      for (let step = 0; step < 60; step++) {
+        if (stopRequested) break;
+        const result = await call('researchStep', { domain: company.domain });
+        if (result.done) break;
+        say(`${company.domain} — ${result.next ?? 'thinking'} (${index + 1} of ${waiting.length})`, 'working');
+      }
+    } catch (error) {
+      failed.push({ domain: company.domain, reason: error.message });
     }
   }
+
+  return runSummary({ total: waiting.length, failed, stopped: stopRequested });
 }
 
 // ---------------------------------------------------------------- pieces
@@ -204,8 +237,12 @@ function emailCard(company) {
   }
 
   const contact = company.contact ?? {};
-  const subject = h('input', { type: 'text', value: company.email.subject ?? '', 'aria-label': 'Subject' });
-  const body = h('textarea', { 'aria-label': 'Body' }, company.email.body ?? '');
+  // The ids tie the labels below to these fields, so clicking a label focuses
+  // the field it names. Scoped by domain because several cards can be on the
+  // page at once and an id has to be unique for the association to hold.
+  const idFor = (what) => `${what}-${company.domain.replace(/[^a-z0-9]/gi, '-')}`;
+  const subject = h('input', { type: 'text', id: idFor('subject'), value: company.email.subject ?? '', 'aria-label': 'Subject' });
+  const body = h('textarea', { id: idFor('body'), 'aria-label': 'Body' }, company.email.body ?? '');
   const counter = h('span', { class: 'small soft' }, `${wordCount(company.email.body)} words`);
   body.addEventListener('input', () => { counter.textContent = `${wordCount(body.value)} words`; });
   const feedback = h('input', { type: 'text', placeholder: 'What should change?', 'aria-label': 'Rewrite instructions' });
@@ -225,8 +262,8 @@ function emailCard(company) {
       company.email.hook_source_url ? h('p', { class: 'small' }, 'Hook from ', link(company.email.hook_source_url, company.email.hook_source_url)) : null,
     ),
 
-    h('label', { for: 'subject' }, 'Subject'), subject,
-    h('div', { class: 'between' }, h('label', { for: 'body' }, 'Body'), counter), body,
+    h('label', { htmlFor: idFor('subject') }, 'Subject'), subject,
+    h('div', { class: 'between' }, h('label', { htmlFor: idFor('body') }, 'Body'), counter), body,
 
     h('div', { class: 'row actions' },
       actionButton(sendLabel(state.emailTo), {
@@ -372,7 +409,8 @@ const icon = (name, plum = false) => {
   return h('div', { class: `icon ${plum ? 'plum' : ''}` }, svg);
 };
 
-function doCard({ iconName, plum, title, body, label, onclick }) {
+/** @param {{ iconName: string, plum?: boolean, title: string, body: string, label: string, onclick: Function }} options */
+function doCard({ iconName, plum = false, title, body, label, onclick }) {
   const { enabled, reason } = actionState({ signedIn: state.signedIn, ready: state.ready, busy });
   return h('div', { class: 'do' },
     icon(iconName, plum),
@@ -380,6 +418,26 @@ function doCard({ iconName, plum, title, body, label, onclick }) {
     h('p', {}, body),
     h('div', { class: 'go' },
       h('button', { class: 'go-link', disabled: !enabled, title: reason, onclick }, `${label} →`)),
+  );
+}
+
+// Only ever shown while something long is running. A run over twenty
+// companies is minutes of API calls, and the only alternative to a Stop
+// button is closing the tab — which looks, from the page, exactly like a
+// crash.
+function renderStop() {
+  fill($('#stop'),
+    busy && canStop
+      ? h('button', {
+          class: 'linky',
+          onclick: () => {
+            stopRequested = true;
+            say('Stopping after this question…', 'working');
+            renderStop();
+          },
+          disabled: stopRequested,
+        }, stopRequested ? 'Stopping…' : 'Stop')
+      : null,
   );
 }
 
@@ -402,14 +460,14 @@ function renderToolbar() {
       title: 'Research companies',
       body: researchQueueLine(state.companies),
       label: waiting ? 'Research shortlisted' : 'Nothing to research',
-      onclick: () => run('Researching', researchAll),
+      onclick: () => run('Researching', researchAll, { stoppable: true }),
     }),
   );
 }
 
 function renderBanner() {
   const { title, detail } = bannerFor(state.companies);
-  $('#banner').replaceChildren(h('strong', {}, title), detail ? h('span', {}, detail) : null);
+  fill($('#banner'), h('strong', {}, title), detail ? h('span', {}, detail) : null);
 }
 
 function renderMetrics() {
@@ -419,7 +477,7 @@ function renderMetrics() {
   const stat = (label, value, hint) =>
     h('div', { class: 'stat', title: hint ?? '' }, h('span', { class: 'figure' }, value), h('span', { class: 'label' }, label));
 
-  $('#metrics').replaceChildren(
+  fill($('#metrics'),
     stat('per company', formatDuration(m.averageMs), 'Average research time. The brief asks for under two minutes, against 15-20 by hand.'),
     stat('lookups each', m.lookupsPerCompany === null ? '—' : String(m.lookupsPerCompany), 'Pages fetched and searches run per company.'),
     stat('drafts rewritten', asPercent(m.rewriteRate), 'Rewrite more than half and the system is costing you time, not saving it.'),
@@ -429,20 +487,54 @@ function renderMetrics() {
   );
 }
 
+/**
+ * The tab strip, as the ARIA tab pattern expects it: one stop in the tab
+ * order, and the arrow keys move between tabs. Without this, reaching the
+ * sixth tab from the keyboard means six presses of Tab through controls you
+ * did not want, and screen readers announce six unrelated buttons rather
+ * than one set of six.
+ */
 function renderTabs() {
   const counts = countsByStage(state.companies);
-  $('.tabs').replaceChildren(...STAGES.map((item) =>
-    h('button', {
+  // Rendering replaces these buttons, so the one that was just clicked or
+  // arrowed to stops existing and focus falls back to the document. The next
+  // arrow press would then go nowhere. Put it back — but only if it was in
+  // the strip to begin with, so an ordinary re-render never steals focus
+  // from whatever you were typing in.
+  const hadFocus = $('.tabs').contains(document.activeElement);
+
+  const move = (by) => {
+    const at = STAGES.findIndex((item) => item.id === stage);
+    stage = STAGES[(at + by + STAGES.length) % STAGES.length].id;
+    render();
+  };
+
+  $('.tabs').replaceChildren(...STAGES.map((item) => {
+    const selected = item.id === stage;
+    return h('button', {
       class: 'tab', role: 'tab', id: `tab-${item.id}`, title: item.blurb,
-      'aria-selected': String(item.id === stage),
+      'aria-selected': String(selected),
+      'aria-controls': 'list',
+      tabIndex: selected ? 0 : -1,
       onclick: () => { stage = item.id; render(); },
-    }, item.name, h('span', { class: 'count' }, String(counts[item.id])))));
+      onkeydown: (event) => {
+        const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+        if (!step) return;
+        event.preventDefault();
+        move(step);
+      },
+    }, item.name, h('span', { class: 'count' }, String(counts[item.id])));
+  }));
+
+  if (hadFocus) $(`#tab-${stage}`)?.focus();
   $('#blurb').textContent = stageById(stage).blurb;
+  $('#list').setAttribute('aria-labelledby', `tab-${stage}`);
 }
 
 function render() {
   renderHeader();
   renderRail();
+  renderStop();
   renderToolbar();
   renderBanner();
   renderMetrics();
@@ -452,9 +544,7 @@ function render() {
   const mine = companiesIn(state.companies, current.id);
   const draw = { review: companyCard, emails: emailCard, waiting: shortlistRow, handoff: handoffCard }[current.id] ?? plainRow;
 
-  $('#list').replaceChildren(
-    ...(mine.length ? mine.map(draw) : [h('p', { class: 'empty' }, current.empty)]),
-  );
+  fill($('#list'), mine.length ? mine.map(draw) : [h('p', { class: 'empty' }, current.empty)]);
 }
 
 $('#signin').addEventListener('click', (event) => {

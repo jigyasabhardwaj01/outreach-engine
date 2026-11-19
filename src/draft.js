@@ -155,7 +155,10 @@ function buildPrompt({ company, evidence, profile, feedback }) {
     `- Do not tell them they need anything unless the research says they do. Otherwise ask it as a question.`,
     `- Stop before the sign-off; a signature is added afterwards.`,
     `Set hook_source_url to the exact url of the research item the hook came from.`,
-    feedback ? `\nThe last attempt was rejected. Fix exactly this: ${feedback}` : '',
+    // Worded as the reader's instruction, not as a rejection, because the
+    // retry loop below adds its own "fix exactly this" for the automatic
+    // checks. Two blocks with the same opening read as contradicting orders.
+    feedback ? `\nThe person who will send this asked for: ${feedback}` : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -166,6 +169,10 @@ function buildPrompt({ company, evidence, profile, feedback }) {
  * Whatever comes out carries its remaining issues, so the review page can show
  * you what is wrong rather than quietly sending it.
  */
+/**
+ * @param {any} company
+ * @param {{ profile?: any, llm?: any, store?: any, feedback?: string|null, attempts?: number, now?: Date }} options
+ */
 export async function draftEmail(company, { profile, llm, store, feedback = null, attempts = 3, now = new Date() } = {}) {
   if (!company.contact) throw new Error(`No contact for ${company.domain} yet.`);
 
@@ -175,12 +182,26 @@ export async function draftEmail(company, { profile, llm, store, feedback = null
 
   let draft = null;
   let issues = [];
+  let refusals = 0;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const correction = issues.length ? `\nThe last attempt was rejected. Fix exactly this: ${issues.join(' ')}` : '';
-    draft = (await llm.ask({ prompt: prompt + correction, schema: DRAFT_SCHEMA })).json;
+    const reply = (await llm.ask({ prompt: prompt + correction, schema: DRAFT_SCHEMA })).json;
+
+    // The schema asks for a body, but a schema is a request, not a guarantee:
+    // a truncated or refused answer arrives shaped like a draft with nothing
+    // in it. Treat that as a failed attempt rather than reading through it.
+    if (typeof reply?.body !== 'string' || !reply.body.trim()) {
+      refusals++;
+      issues = ['The last attempt came back with no body. Write the full email.'];
+      continue;
+    }
+
+    draft = reply;
     issues = checkDraft(draft, { company, evidence, profile });
     if (!issues.length) break;
   }
+
+  if (!draft) throw new Error(`The model returned no usable draft for ${company.domain} after ${refusals} attempts.`);
 
   const signature = [profile.seller.senderName, profile.seller.senderTitle].filter(Boolean).join('\n');
   const body = signature ? `${draft.body.trim()}\n\n${signature}` : draft.body.trim();

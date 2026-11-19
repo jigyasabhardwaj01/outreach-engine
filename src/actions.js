@@ -7,6 +7,7 @@ import { draftEmail } from './draft.js';
 import { sendEmail, approve } from './send.js';
 import { nextQuestion } from './assess.js';
 
+/** @param {{ profile: any, llm: any, store: any, settings: import('./env.js').Settings, researcher?: Researcher }} options */
 export function createActions({ profile, llm, store, settings, researcher = new Researcher({ profile, llm, store }) }) {
   const load = async (domain) => {
     const company = await store.get(domain);

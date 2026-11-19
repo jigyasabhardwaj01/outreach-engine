@@ -64,7 +64,7 @@ async function shortlist(store, profile, candidate, seen) {
  * Fill the shortlist, taking from each source in turn so one prolific search
  * can't crowd out the others.
  */
-export async function discover({ profile, llm, store, limit = 10, onProgress = () => {} }) {
+export async function discover({ profile, llm, store, limit = 10, onProgress = (/** @type {string} */ _message) => {} }) {
   const seen = new Set(Object.keys(await store.all()));
   const perSource = Math.ceil(limit / profile.discovery.length) + 3;
 

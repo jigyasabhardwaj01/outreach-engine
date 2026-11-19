@@ -52,7 +52,11 @@ const connect = (host, port) =>
     socket.once('error', reject);
   });
 
+/** A short, unique tag, so two sends can never be mistaken for one retry. */
+const sendTag = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
 /** Log in and hang up. Proves the credentials work without sending anything. */
+/** @param {{ host: string, port?: number, user: string, pass: string, connectImpl?: Function, timeoutMs?: number }} options */
 export async function openSession({ host, port = 465, user, pass, connectImpl = connect, timeoutMs = 20000 }) {
   return sendSmtp({ host, port, user, pass, connectImpl, timeoutMs, loginOnly: true });
 }
@@ -63,6 +67,7 @@ export async function openSession({ host, port = 465, user, pass, connectImpl = 
  * `connectImpl` is injected so the conversation can be tested against a fake
  * socket. Everything is driven off the reply codes rather than timing.
  */
+/** @param {{ host: string, port?: number, user: string, pass: string, from?: string, fromName?: string|null, to?: string, subject?: string, body?: string, connectImpl?: Function, timeoutMs?: number, loginOnly?: boolean }} options */
 export async function sendSmtp({ host, port = 465, user, pass, from, fromName, to, subject, body, connectImpl = connect, timeoutMs = 20000, loginOnly = false }) {
   const socket = await connectImpl(host, port);
   let buffer = '';
@@ -96,11 +101,35 @@ export async function sendSmtp({ host, port = 465, user, pass, from, fromName, t
     flush();
   });
 
+  // A socket that errors or hangs up mid-conversation must fail the read that
+  // is waiting on it. Without a listener, Node treats 'error' on a socket as
+  // unhandled and takes the whole process down with it — which on a serverless
+  // host is an unexplained 500, and locally kills the server.
+  const stop = (error) => {
+    const pending = waiting;
+    waiting = null;
+    pending?.reject(error);
+  };
+  socket.on('error', (error) => stop(new Error(`The connection to the mail server failed: ${error.message}`)));
+  socket.on('close', () => stop(new Error('The mail server closed the connection.')));
+
   const read = () =>
     new Promise((resolve, reject) => {
-      waiting = { resolve, reject };
+      // Clear the timer on settle, so one reply's timeout cannot fire against
+      // a later one and so nothing is left pending when we are done.
+      const timer = setTimeout(() => stop(new Error('The mail server stopped replying.')), timeoutMs);
+      timer.unref?.();
+      waiting = {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      };
       flush();
-      setTimeout(() => waiting && reject(new Error('The mail server stopped replying.')), timeoutMs).unref?.();
     });
 
   const say = async (line, expected) => {
@@ -151,13 +180,17 @@ export function queueId(text) {
   return tokens.filter((token) => /[a-zA-Z]/.test(token)).at(-1) ?? null;
 }
 
-async function sendViaResend({ settings, from, fromName, to, subject, body, fetchImpl }) {
+async function sendViaResend({ settings, from, fromName, to, subject, body, fetchImpl, tag = sendTag() }) {
   const res = await fetchImpl('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${settings.RESEND_API_KEY}`,
       'Content-Type': 'application/json',
-      'Idempotency-Key': `outreach-${to}-${subject}`.slice(0, 256),
+      // Keyed on this send, not on the recipient and subject. Every email in
+      // this project goes to the same address, so two companies that happen to
+      // produce the same subject line would otherwise look like one retry and
+      // the second would be silently dropped.
+      'Idempotency-Key': `outreach-${tag}`,
     },
     body: JSON.stringify({ from: fromName ? `${fromName} <${from}>` : from, to: [to], subject, text: body }),
     signal: AbortSignal.timeout(30000),
@@ -182,6 +215,7 @@ export function mailerFor(settings) {
 }
 
 /** Send one message by whichever route is configured. */
+/** @param {{ settings: any, to: string, subject: string, body: string, fetchImpl?: Function, connectImpl?: Function }} options */
 export async function deliver({ settings, to, subject, body, fetchImpl = fetch, connectImpl = connect }) {
   const mailer = mailerFor(settings);
   if (!mailer.ready) throw new Error(`Cannot send: ${mailer.missing.join(', ')} not set.`);

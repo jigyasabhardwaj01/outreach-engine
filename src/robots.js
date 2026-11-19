@@ -54,7 +54,7 @@ export function parseRobots(text) {
 const matches = (rule, path) => {
   if (rule === '') return false;
   // robots.txt wildcards: * for any run, $ for end-of-path.
-  const pattern = rule.replace(/[.+^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*').replace(/\\\$$/, '$');
+  const pattern = rule.replace(/[.+^${}()|[\]\\?]/g, '\\$&').replaceAll('*', '.*').replace(/\\\$$/, '$');
   return new RegExp(`^${pattern}`).test(path);
 };
 
@@ -90,6 +90,10 @@ export function isAllowed(robotsText, path, agent = ALL) {
  * which matches how every other client on the web behaves.
  */
 export class RobotsCache {
+  /** @type {typeof fetch} */ fetchImpl;
+  /** @type {string} */ agent;
+  /** @type {number} */ timeoutMs;
+
   constructor({ fetchImpl = fetch, agent = ALL, timeoutMs = 8000 } = {}) {
     Object.assign(this, { fetchImpl, agent, timeoutMs });
     this.hosts = new Map();

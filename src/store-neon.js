@@ -4,6 +4,7 @@
 const stamp = (company) => ({ ...company, updatedAt: new Date().toISOString() });
 
 export class NeonStore {
+  /** @param {{ url?: string, fetchImpl?: Function, timeoutMs?: number }} options */
   constructor({ url, fetchImpl = fetch, timeoutMs = 15000 } = {}) {
     if (!url) throw new Error('NeonStore needs a DATABASE_URL.');
     this.url = url;

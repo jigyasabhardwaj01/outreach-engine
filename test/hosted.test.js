@@ -116,9 +116,31 @@ test('health says what is missing without being signed in', async () => {
   const { body } = await api.health();
 
   assert.equal(body.ready, false);
-  assert.deepEqual(body.missing, ['DATABASE_URL', 'GEMINI_API_KEY', 'EMAIL_TO', 'APP_PASSWORD']);
+  assert.deepEqual([...body.missing].sort(), ['APP_PASSWORD', 'DATABASE_URL', 'EMAIL_TO', 'GEMINI_API_KEY']);
   assert.equal(body.access, 'closed');
   assert.equal(body.database, 'not configured');
+});
+
+test('health answers for the deployment it is in, not for a hosted one it is not', async () => {
+  // Locally the server binds to localhost and the file store works, so
+  // neither a password nor a database is missing. Reporting them as missing
+  // makes a perfectly good install look broken.
+  const api = createApi({ actions: {}, store: new MemoryStore(), settings: { GEMINI_API_KEY: 'k', EMAIL_TO: 'you@example.com' } });
+  const { body } = await api.health();
+
+  assert.equal(body.ready, true);
+  assert.deepEqual(body.missing, []);
+  assert.match(body.access, /local/);
+  assert.match(body.database, /file store/);
+});
+
+test('a mixed-case variable belonging to the operating system is not reported as ours', async () => {
+  const { loadEnv, aliasesUsed, isKnownSetting } = await import('../src/env.js');
+  loadEnv({ root: '/nonexistent', processEnv: { MallocNanoZone: '0', __CFBundleIdentifier: 'com.example', hunterio_api_key: 'h' } });
+
+  assert.deepEqual(aliasesUsed, [{ found: 'hunterio_api_key', read_as: 'HUNTER_API_KEY' }]);
+  assert.ok(isKnownSetting('Gemini_api_key'));
+  assert.ok(!isKnownSetting('MallocNanoZone'));
 });
 
 test('health distinguishes a deliberately open site from a broken one', async () => {

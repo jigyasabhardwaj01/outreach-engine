@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Outreach review</title>
+<meta name="description" content="Evidence-first cold outreach: companies qualified against a profile, every answer with its source, nothing sent without approval.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23e8701a'/%3E%3Cpath d='M7 11h18v11H7z' fill='none' stroke='%23fff' stroke-width='2.2'/%3E%3Cpath d='M7 12l9 6 9-6' fill='none' stroke='%23fff' stroke-width='2.2'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -146,7 +148,7 @@
     background: var(--card); color: var(--ink); cursor: pointer; transition: border-color .12s, background .12s, opacity .12s;
   }
   button:hover:not(:disabled) { border-color: var(--soft); }
-  button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible, .tab:focus-visible {
+  button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible, .tab:focus-visible, #list:focus-visible {
     outline: 2px solid var(--amber); outline-offset: 2px;
   }
   button:disabled { opacity: .42; cursor: not-allowed; }
@@ -174,6 +176,11 @@
   }
   .status.ok { color: var(--ok); }
   .status.bad { color: var(--no); }
+  /* No height of its own: it is empty except while something is running,
+     and a permanently reserved strip is a permanent hole in the page. */
+  .stopline { text-align: center; }
+  .stopline button { font-size: 13px; }
+  .stopline:empty { display: none; }
   @keyframes pulse { 0%, 100% { opacity: .22; } 50% { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { .status.working::after { animation: none; } }
 
@@ -201,6 +208,22 @@
 
   @media (max-width: 620px) {
     .doing { grid-template-columns: 1fr; }
+
+    /* Four stacked chips turned a sticky header into a fifth of the screen,
+       on every screen, forever. One scrollable line instead: the same
+       information, one line tall. */
+    .masthead-inner { padding: 10px 16px; flex-wrap: wrap; row-gap: 7px; }
+    .masthead #chips {
+      margin-left: 0; order: 2; flex-basis: 100%;
+      flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+      padding-bottom: 1px; gap: 6px;
+    }
+    .masthead #chips::-webkit-scrollbar { display: none; }
+    .masthead .here, .divider { display: none; }
+    .pill { font-size: 11.5px; padding: 2px 9px; }
+
+    .hero { padding: 16px 0 22px; }
+    main { padding: 0 16px 70px; }
     .rail { max-width: none; }
     /* Six labels will not fit across a phone, so show only where things are. */
     .stop .name { display: none; }
@@ -223,8 +246,9 @@
   <section class="hero">
     <h1>Reach the right teams <em>with a real reason to talk.</em></h1>
     <p>Every company is checked against your profile. Each answer comes with its source, and nothing sends until you approve it.</p>
-    <div class="rail" id="rail" aria-label="Pipeline"></div>
+    <div class="rail" id="rail" role="group" aria-label="Pipeline progress"></div>
     <p class="status" id="status" role="status" aria-live="polite"></p>
+    <div class="stopline" id="stop"></div>
   </section>
 
   <section class="doing" id="toolbar"></section>
@@ -233,7 +257,7 @@
 
   <div class="tabs" role="tablist" aria-label="Review stages"></div>
   <p class="blurb" id="blurb"></p>
-  <div id="list"></div>
+  <div id="list" role="tabpanel" tabindex="0"></div>
 </main>
 
 <dialog id="signin" aria-label="Sign in"></dialog>
